@@ -1,10 +1,6 @@
 """
 Analizador Dinámico de Plataformas de Soporte para Equipos Rotativos
 ======================================================================
-Uso: streamlit run GRÁFICOS.py
-
-Dependencias:
-    pip install streamlit pandas numpy matplotlib plotly python-docx openpyxl
 """
 
 import streamlit as st
@@ -13,16 +9,14 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from matplotlib.patches import Patch
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import io, base64, math, warnings
+import io, math, warnings
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor, Inches
+from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
-from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn as q
 warnings.filterwarnings("ignore")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -646,10 +640,13 @@ with tab_class:
                 int(x*255) for x in color_junta(
                     sorted(set(rv['junta'] for rv in resultados.values())), junta)[:3])
 
-            for u_val, f_val, cond_lbl, sym in [
-                (u_op, f_op, "Op", "circle"),
-                (u_rd, r['f_pk'], "Rd", "triangle-up")
-            ]:
+            puntos_a_graficar = []
+            if modo_cond in ["Operación", "Ambas"]:
+                puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
+            if modo_cond in ["Run-Down", "Ambas"]:
+                puntos_a_graficar.append((u_rd, r['f_pk'], "Rd", "triangle-up"))
+
+            for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{junta}_{cond_lbl}"
                 if key_ not in plotted and u_val > 0:
                     plotted.add(key_)
@@ -725,10 +722,13 @@ with tab_class:
                 int(x*255) for x in color_junta(
                     sorted(set(rv['junta'] for rv in resultados.values())), junta)[:3])
 
-            for u_val, f_val, cond_lbl, sym in [
-                (u_op, f_op, "Op", "circle"),
-                (u_rd, r['f_pk'], "Rd", "triangle-up")
-            ]:
+            puntos_a_graficar = []
+            if modo_cond in ["Operación", "Ambas"]:
+                puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
+            if modo_cond in ["Run-Down", "Ambas"]:
+                puntos_a_graficar.append((u_rd, r['f_pk'], "Rd", "triangle-up"))
+
+            for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{junta}_{cond_lbl}"
                 if key_ not in plotted_blake and u_val > 0:
                     plotted_blake.add(key_)
@@ -948,8 +948,6 @@ with tab_report:
                         r = c.paragraphs[0].runs[0]
                         r.font.bold = True; r.font.size = Pt(9)
                         r.font.name = 'Arial'
-                        from docx.oxml import OxmlElement
-                        from docx.oxml.ns import qn as q
                         tcp = c._tc.get_or_add_tcPr()
                         shd = OxmlElement('w:shd')
                         shd.set(q('w:val'),'clear'); shd.set(q('w:color'),'auto')
