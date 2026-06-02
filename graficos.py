@@ -83,6 +83,22 @@ def auto_dir(caso):
     if '_Z' in caso_u or caso_u.endswith('Z'): return ('U3', 'Z')
     return ('U1', str(caso))
 
+def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF):
+    """Amplitud (mm) y frecuencia (Hz) del transitorio.
+    - Valor fijo: FRF en f_rd × F_rd.
+    - Curva desbalance: envolvente FRF(f)×F(f), F(f)=m·e·ω², m·e[kg·m]=U[g·mm]/1e6.
+    """
+    if modo_fuerza.startswith("Curva"):
+        freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
+        if freqs.size == 0:
+            return 0.0, r['f_rd']
+        F_arr = (U_gmm / 1e6) * (2 * np.pi * freqs) ** 2
+        u_arr = frf * F_arr / F_REF
+        idx = int(np.argmax(u_arr))
+        return float(u_arr[idx]), float(freqs[idx])
+    u = r['frf_rd'] * F_rd_cal / F_REF
+    return u, r['f_rd']
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -130,6 +146,16 @@ with st.sidebar:
     else:
         f_rd = st.number_input("f_rd manual (Hz)", value=3.5, step=0.1, format="%.2f")
     st.caption(f"f_rd en uso: **{f_rd:.2f} Hz**")
+
+    modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
+                                  ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"])
+    if modo_fuerza_tr.startswith("Curva"):
+        U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
+                                help="F(f)=m·e·ω². Se evalúa la envolvente FRF(f)×F(f) en todo el barrido.")
+        if U_gmm > 0:
+            st.caption(f"A f_op implica F = {(U_gmm/1e6)*(2*math.pi*f_op)**2:.0f} N")
+    else:
+        U_gmm = 0.0
 
     st.markdown("**Banda de detección de peak estructural**")
     col_pb1, col_pb2 = st.columns(2)
@@ -564,10 +590,10 @@ with tab_class:
             b_op_lbl, b_op_col = classify(vp_op, BLAKE_ZONES)
             i_op_lbl, i_op_col = classify(vr_op, ISO_ZONES)
 
-            # Transitorio: FRF en f_rd (cruce resonante del aislador)
-            u_rd  = r['frf_rd'] * F_rd_cal / F_REF_N
-            vp_rd = v_peak(u_rd, r['f_rd'])
-            vr_rd = v_rms(u_rd,  r['f_rd'])
+            # Transitorio: valor fijo en f_rd, o envolvente de la curva de desbalance
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+            vp_rd = v_peak(u_rd, f_rd_eff)
+            vr_rd = v_rms(u_rd,  f_rd_eff)
             r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
             b_rd_lbl, _ = classify(vp_rd, BLAKE_ZONES)
             i_rd_lbl, _ = classify(vr_rd, ISO_ZONES)
@@ -582,8 +608,8 @@ with tab_class:
                 'Richart_op': r_op_lbl,
                 'Blake_op': b_op_lbl,
                 'ISO_op': i_op_lbl,
-                # Transitorio (f_rd)
-                'f_rd (Hz)': round(r['f_rd'], 2),
+                # Transitorio (f_rd o frecuencia de envolvente)
+                'f_rd (Hz)': round(f_rd_eff, 2),
                 'A_rd (mm)': round(u_rd, 4),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
@@ -593,8 +619,9 @@ with tab_class:
 
         df_class = pd.DataFrame(rows_class)
 
-        # Advertencia: f_rd fuera del rango de datos cargados
-        if resultados and not any(r['f_rd_en_rango'] for r in resultados.values()):
+        # Advertencia: f_rd fuera del rango de datos cargados (solo modo valor fijo)
+        if (modo_fuerza_tr.startswith("Valor") and resultados
+                and not any(r['f_rd_en_rango'] for r in resultados.values())):
             f_min_d = df_raw['Freq'].min(); f_max_d = df_raw['Freq'].max()
             st.warning(
                 f"⚠️ La frecuencia de transitorio f_rd = {f_rd:.2f} Hz está **fuera del rango "
@@ -710,7 +737,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd = r['frf_rd'] * F_rd_cal / F_REF_N
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -719,7 +746,7 @@ with tab_class:
             if modo_cond in ["Operación", "Ambas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
             if modo_cond in ["Transitorio", "Ambas"]:
-                puntos_a_graficar.append((u_rd, r['f_rd'], "Tr", "triangle-up"))
+                puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
@@ -790,7 +817,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd = r['frf_rd'] * F_rd_cal / F_REF_N
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -799,7 +826,7 @@ with tab_class:
             if modo_cond in ["Operación", "Ambas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
             if modo_cond in ["Transitorio", "Ambas"]:
-                puntos_a_graficar.append((u_rd, r['f_rd'], "Tr", "triangle-up"))
+                puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
