@@ -85,7 +85,10 @@ with st.sidebar:
     st.markdown("**Equipo**")
     f_op_rpm = st.number_input("Frecuencia de operación (RPM)", value=2900.0, step=10.0, format="%.0f")
     f_op = f_op_rpm / 60.0
-    st.caption(f"= {f_op:.2f} Hz")
+    st.caption(f"= {f_op:.2f} Hz (máxima del equipo)")
+    W_pata = st.number_input("Peso del equipo por pata (N)", value=0.0, step=100.0, format="%.0f",
+                             help="Peso estático por apoyo. Necesario para calcular f_rd del aislador. "
+                                  "Si lo dejas en 0, deberás ingresar f_rd manualmente.")
 
     st.divider()
     st.markdown("**Cargas del fabricante (N/pata = total ÷ 4)**")
@@ -103,6 +106,32 @@ with st.sidebar:
     st.caption("Novibra RAEM2500: 5600 N/mm")
 
     st.divider()
+    st.markdown("**Transitorio (partida / parada)**")
+    # Frecuencia del modo de cuerpo rígido del equipo sobre el aislador:
+    #   f_rd = (1/2π)·√(k/m)  con  k = K_din[N/m]  y  m = W_pata/g
+    if W_pata > 0:
+        f_rd_calc = (1.0/(2*math.pi)) * math.sqrt(K_din*1000.0*9.81 / W_pata)
+        st.caption(f"f_rd calculada (aislador): **{f_rd_calc:.2f} Hz**")
+    else:
+        f_rd_calc = None
+        st.caption("Ingresa el peso por pata para calcular f_rd automáticamente.")
+    origen_frd = st.radio("Origen de f_rd", ["Calculada", "Manual"],
+                          index=1 if f_rd_calc is None else 0, horizontal=True)
+    if origen_frd == "Calculada" and f_rd_calc is not None:
+        f_rd = f_rd_calc
+    else:
+        f_rd = st.number_input("f_rd manual (Hz)", value=3.5, step=0.1, format="%.2f")
+    st.caption(f"f_rd en uso: **{f_rd:.2f} Hz**")
+
+    st.markdown("**Banda de detección de peak estructural**")
+    col_pb1, col_pb2 = st.columns(2)
+    with col_pb1:
+        f_band_lo = st.number_input("f mín (Hz)", value=40.0, step=5.0, format="%.0f")
+    with col_pb2:
+        f_band_hi = st.number_input("f máx (Hz)", value=80.0, step=5.0, format="%.0f")
+    st.caption("Rango donde se busca la resonancia estructural cercana a operación.")
+
+    st.divider()
     st.markdown("**Zona de exclusión**")
     z_lo = st.number_input("Factor inferior", value=0.8, step=0.05, format="%.2f")
     z_hi = st.number_input("Factor superior", value=1.2, step=0.05, format="%.2f")
@@ -112,14 +141,15 @@ with st.sidebar:
 
     st.divider()
     modo_cond = st.selectbox("Condición a graficar",
-                             ["Operación", "Run-Down", "Ambas"], index=0)
+                             ["Operación", "Transitorio", "Ambas"], index=0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEADER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("📊 Analizador Dinámico — Plataformas de Soporte para Equipos Rotativos")
 st.markdown(
-    f"**Frecuencia de operación:** {f_op_rpm:.0f} RPM ({f_op:.2f} Hz) | "
+    f"**Operación:** {f_op_rpm:.0f} RPM ({f_op:.2f} Hz) | "
+    f"**Transitorio f_rd:** {f_rd:.2f} Hz | "
     f"**Zona de exclusión ACI 351.3R:** {f_excl_lo:.2f} – {f_excl_hi:.2f} Hz | "
     f"**K_din aislador:** {K_din:.0f} N/mm"
 )
@@ -217,7 +247,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
 # PROCESAMIENTO CENTRAL
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_):
+def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_):
     if not df_raw_json:
         return {}, pd.DataFrame()
     df = pd.read_json(io.StringIO(df_raw_json))
@@ -255,7 +285,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_):
                 rj[col_resp].values if not rj.empty else np.zeros_like(freqs)
             ))
 
-            mask = (freqs >= 40) & (freqs <= 80)
+            mask = (freqs >= f_band_lo_) & (freqs <= f_band_hi_)
             if not mask.any(): mask = np.ones(len(freqs), bool)
 
             idx_pk  = np.argmax(frf_mm[mask])
@@ -266,6 +296,12 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_):
             idx_op  = np.argmin(np.abs(freqs - f_op_))
             frf_op  = frf_mm[idx_op]
             fase_op = fase_deg[idx_op]
+
+            # Transitorio (partida/parada): FRF en el cruce resonante del aislador f_rd
+            idx_rd  = np.argmin(np.abs(freqs - f_rd_))
+            frf_rd  = frf_mm[idx_rd]
+            fase_rd = fase_deg[idx_rd]
+            f_rd_en_rango = bool(freqs.min() <= f_rd_ <= freqs.max())
 
             en_zona = f_excl_lo_ <= f_pk <= f_excl_hi_
             dist_90 = abs(abs(fase_pk) - 90)
@@ -285,6 +321,8 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_):
                 'fase_deg': fase_deg.tolist(),
                 'f_pk': f_pk, 'frf_pk': frf_pk, 'fase_pk': fase_pk,
                 'frf_op': frf_op, 'fase_op': fase_op,
+                'f_rd': f_rd_, 'frf_rd': frf_rd, 'fase_rd': fase_rd,
+                'f_rd_en_rango': f_rd_en_rango,
                 'en_zona': en_zona, 'dist_90': dist_90,
                 'diagnostico': diagnostico,
             }
@@ -305,7 +343,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_):
 
 if not df_raw.empty:
     resultados, df_res = procesar(
-        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi
+        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi
     )
 else:
     resultados, df_res = {}, pd.DataFrame()
@@ -481,10 +519,10 @@ with tab_class:
             b_op_lbl, b_op_col = classify(vp_op, BLAKE_ZONES)
             i_op_lbl, i_op_col = classify(vr_op, ISO_ZONES)
 
-            # Run-down: FRF en peak
-            u_rd  = r['frf_pk'] * F_rd_cal / F_REF_N
-            vp_rd = v_peak(u_rd, r['f_pk'])
-            vr_rd = v_rms(u_rd,  r['f_pk'])
+            # Transitorio: FRF en f_rd (cruce resonante del aislador)
+            u_rd  = r['frf_rd'] * F_rd_cal / F_REF_N
+            vp_rd = v_peak(u_rd, r['f_rd'])
+            vr_rd = v_rms(u_rd,  r['f_rd'])
             r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
             b_rd_lbl, _ = classify(vp_rd, BLAKE_ZONES)
             i_rd_lbl, _ = classify(vr_rd, ISO_ZONES)
@@ -499,7 +537,8 @@ with tab_class:
                 'Richart_op': r_op_lbl,
                 'Blake_op': b_op_lbl,
                 'ISO_op': i_op_lbl,
-                # Run-Down
+                # Transitorio (f_rd)
+                'f_rd (Hz)': round(r['f_rd'], 2),
                 'A_rd (mm)': round(u_rd, 4),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
@@ -508,6 +547,16 @@ with tab_class:
             })
 
         df_class = pd.DataFrame(rows_class)
+
+        # Advertencia: f_rd fuera del rango de datos cargados
+        if resultados and not any(r['f_rd_en_rango'] for r in resultados.values()):
+            f_min_d = df_raw['Freq'].min(); f_max_d = df_raw['Freq'].max()
+            st.warning(
+                f"⚠️ La frecuencia de transitorio f_rd = {f_rd:.2f} Hz está **fuera del rango "
+                f"de datos cargados** ({f_min_d:.1f}–{f_max_d:.1f} Hz). Los resultados de "
+                f"transitorio usan la FRF del extremo más cercano y **no son válidos**. "
+                f"Sube un barrido SAP2000 que incluya la baja frecuencia (0 → ~50 Hz)."
+            )
 
         # Mostrar con colores
         col_crit = ['Richart_op','Blake_op','ISO_op','Richart_rd','ISO_rd']
@@ -616,7 +665,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd = r['frf_pk'] * F_rd_cal / F_REF_N
+            u_rd = r['frf_rd'] * F_rd_cal / F_REF_N
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -624,8 +673,8 @@ with tab_class:
             puntos_a_graficar = []
             if modo_cond in ["Operación", "Ambas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
-            if modo_cond in ["Run-Down", "Ambas"]:
-                puntos_a_graficar.append((u_rd, r['f_pk'], "Rd", "triangle-up"))
+            if modo_cond in ["Transitorio", "Ambas"]:
+                puntos_a_graficar.append((u_rd, r['f_rd'], "Tr", "triangle-up"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
@@ -696,7 +745,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd = r['frf_pk'] * F_rd_cal / F_REF_N
+            u_rd = r['frf_rd'] * F_rd_cal / F_REF_N
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -704,8 +753,8 @@ with tab_class:
             puntos_a_graficar = []
             if modo_cond in ["Operación", "Ambas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
-            if modo_cond in ["Run-Down", "Ambas"]:
-                puntos_a_graficar.append((u_rd, r['f_pk'], "Rd", "triangle-up"))
+            if modo_cond in ["Transitorio", "Ambas"]:
+                puntos_a_graficar.append((u_rd, r['f_rd'], "Tr", "triangle-up"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
