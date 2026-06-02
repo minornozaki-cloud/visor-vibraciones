@@ -143,6 +143,19 @@ with st.sidebar:
     modo_cond = st.selectbox("Condición a graficar",
                              ["Operación", "Transitorio", "Ambas"], index=0)
 
+    st.divider()
+    with st.expander("⚙️ Avanzado — Unidades y criterios"):
+        F_REF_N = st.number_input("Fuerza de referencia (N por unidad de carga)",
+                                  value=9810.0, step=10.0, format="%.0f",
+                                  help="SAP2000: 1 Ton = 9810 N. La FRF se normaliza por esta fuerza.")
+        factor_despl = st.number_input("Factor de unidad de desplazamiento", value=10.0, step=1.0,
+                                       format="%.2f", help="Convierte la salida de SAP a mm. cm→mm: ×10.")
+        st.markdown("**Límites ISO 20816-3 (v_RMS, mm/s)**")
+        ci1, ci2, ci3 = st.columns(3)
+        with ci1: iso_a = st.number_input("A/B", value=1.12, step=0.01, format="%.2f")
+        with ci2: iso_b = st.number_input("B/C", value=2.80, step=0.01, format="%.2f")
+        with ci3: iso_c = st.number_input("C/D", value=7.10, step=0.01, format="%.2f")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HEADER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
@@ -154,6 +167,14 @@ st.markdown(
     f"**K_din aislador:** {K_din:.0f} N/mm"
 )
 st.divider()
+
+# Reconstruir zonas ISO con los límites configurables del sidebar
+ISO_ZONES = [
+    (iso_a, "Zona A — Aceptable",        "#1a9850"),
+    (iso_b, "Zona B — Normal",           "#66bd63"),
+    (iso_c, "Zona C — Alarma",           "#fee08b"),
+    (1e9,   "Zona D — Detener equipo",   "#f46d43"),
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
@@ -247,7 +268,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
 # PROCESAMIENTO CENTRAL
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_):
+def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_, factor_despl_):
     if not df_raw_json:
         return {}, pd.DataFrame()
     df = pd.read_json(io.StringIO(df_raw_json))
@@ -279,7 +300,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
             if mj.empty: continue
 
             freqs   = mj['Freq'].values
-            frf_mm  = np.abs(mj[col_resp].values) * 10  # cm → mm, /Ton
+            frf_mm  = np.abs(mj[col_resp].values) * factor_despl_  # → mm, /unidad de carga
             fase_deg= np.degrees(np.arctan2(
                 ij[col_resp].values if not ij.empty else np.zeros_like(freqs),
                 rj[col_resp].values if not rj.empty else np.zeros_like(freqs)
@@ -343,7 +364,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
 
 if not df_raw.empty:
     resultados, df_res = procesar(
-        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi
+        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi, factor_despl
     )
 else:
     resultados, df_res = {}, pd.DataFrame()
@@ -586,8 +607,8 @@ with tab_class:
         iso_top_y = max(max_vrms * 1.2, 10.0) # Asegura al menos ver hasta 10 mm/s
         
         fig_iso = go.Figure()
-        ISO_LIMS  = [1.12, 2.80, 7.10]
-        ISO_NAMES = ["Zona A (≤1.12)", "Zona B (≤2.80)", "Zona C (≤7.10)"]
+        ISO_LIMS  = [iso_a, iso_b, iso_c]
+        ISO_NAMES = [f"Zona A (≤{iso_a:.2f})", f"Zona B (≤{iso_b:.2f})", f"Zona C (≤{iso_c:.2f})"]
         ISO_COLS  = ["#1a9850",        "#fee08b",         "#f46d43"]
         for y_val, name, col_ in zip(ISO_LIMS, ISO_NAMES, ISO_COLS):
             fig_iso.add_hline(
@@ -618,10 +639,10 @@ with tab_class:
             font=dict(family="Arial"),
             legend=dict(orientation="h", yanchor="bottom", y=-0.3)
         )
-        fig_iso.add_hrect(y0=0, y1=1.12, fillcolor="#1a9850", opacity=0.06, line_width=0)
-        fig_iso.add_hrect(y0=1.12, y1=2.80, fillcolor="#66bd63", opacity=0.06, line_width=0)
-        fig_iso.add_hrect(y0=2.80, y1=7.10, fillcolor="#fee08b", opacity=0.08, line_width=0)
-        fig_iso.add_hrect(y0=7.10, y1=iso_top_y, fillcolor="#f46d43", opacity=0.08, line_width=0)
+        fig_iso.add_hrect(y0=0, y1=iso_a, fillcolor="#1a9850", opacity=0.06, line_width=0)
+        fig_iso.add_hrect(y0=iso_a, y1=iso_b, fillcolor="#66bd63", opacity=0.06, line_width=0)
+        fig_iso.add_hrect(y0=iso_b, y1=iso_c, fillcolor="#fee08b", opacity=0.08, line_width=0)
+        fig_iso.add_hrect(y0=iso_c, y1=iso_top_y, fillcolor="#f46d43", opacity=0.08, line_width=0)
         st.plotly_chart(fig_iso, use_container_width=True)
 
         # ══════════════════════════════════════════════════════════════════════
