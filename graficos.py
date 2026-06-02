@@ -1088,6 +1088,31 @@ with tab_report:
                     p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
                     p.paragraph_format.line_spacing = 1.5
 
+                def add_h2(text):
+                    p = doc.add_paragraph()
+                    r = p.add_run(text)
+                    r.font.name='Arial'; r.font.size=Pt(12); r.font.bold=True
+                    r.font.color.rgb = RGBColor(0x2C,0x3E,0x50)
+                    p.paragraph_format.space_before = Pt(8); p.paragraph_format.space_after = Pt(4)
+
+                def add_df_table(df, fs=8):
+                    if df is None or df.empty:
+                        add_para("(Sin datos para esta sección.)"); return
+                    t = doc.add_table(rows=1+len(df), cols=len(df.columns))
+                    t.style = 'Table Grid'
+                    for ci, col_n in enumerate(df.columns):
+                        c = t.rows[0].cells[ci]; c.text = str(col_n)
+                        rr = c.paragraphs[0].runs[0]
+                        rr.font.bold=True; rr.font.size=Pt(fs); rr.font.name='Arial'
+                        rr.font.color.rgb = RGBColor(0xFF,0xFF,0xFF)
+                        tcp = c._tc.get_or_add_tcPr(); shd = OxmlElement('w:shd')
+                        shd.set(q('w:val'),'clear'); shd.set(q('w:color'),'auto'); shd.set(q('w:fill'),'1B2A4A')
+                        tcp.append(shd)
+                    for ri, row in df.reset_index(drop=True).iterrows():
+                        for ci, val in enumerate(row):
+                            c = t.rows[ri+1].cells[ci]; c.text = str(val)
+                            rr = c.paragraphs[0].runs[0]; rr.font.size=Pt(fs); rr.font.name='Arial'
+
                 # Portada
                 doc.add_paragraph()
                 p = doc.add_paragraph()
@@ -1113,40 +1138,121 @@ with tab_report:
 
                 doc.add_page_break()
 
-                # Resumen de diagnóstico
-                add_h1("1. Resumen de Diagnóstico de Resonancia")
-                if not df_res.empty:
-                    t = doc.add_table(rows=1+len(df_res), cols=len(df_res.columns))
-                    t.style = 'Table Grid'
-                    for ci, col_n in enumerate(df_res.columns):
-                        c = t.rows[0].cells[ci]
-                        c.text = col_n
-                        r = c.paragraphs[0].runs[0]
-                        r.font.bold = True; r.font.size = Pt(9)
-                        r.font.name = 'Arial'
-                        tcp = c._tc.get_or_add_tcPr()
-                        shd = OxmlElement('w:shd')
-                        shd.set(q('w:val'),'clear'); shd.set(q('w:color'),'auto')
-                        shd.set(q('w:fill'),'1B2A4A'); tcp.append(shd)
-                        r.font.color.rgb = RGBColor(0xFF,0xFF,0xFF)
-                    for ri, row_data in df_res.iterrows():
-                        for ci, val in enumerate(row_data):
-                            c = t.rows[ri+1].cells[ci]
-                            c.text = str(val)
-                            r = c.paragraphs[0].runs[0]
-                            r.font.size = Pt(9); r.font.name = 'Arial'
+                # ════════ Datos calculados para el reporte (fuerzas del sidebar) ════════
+                cc_rows = []
+                for (caso, joint), r in resultados.items():
+                    if r['frf_op'] <= 0: continue
+                    k_est = F_REF_N / r['frf_op']
+                    cc_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
+                        'FRF_op (mm/T)': round(r['frf_op'], 4), 'K_est (N/mm)': round(k_est, 0),
+                        'K_est/K_din': round(k_est/K_din, 2),
+                        'Cumple 10:1': 'Sí' if k_est/K_din >= 10 else 'No'})
+                df_cc_r = pd.DataFrame(cc_rows)
 
-                # Clasificaciones
-                add_h1("2. Clasificación de Amplitudes")
+                cl_rows = []
+                for (caso, joint), r in resultados.items():
+                    F_op_cal = F_op_V if r['dir'] == 'Z' else F_op_H
+                    F_rd_cal = F_rd_V if r['dir'] == 'Z' else F_rd_H
+                    u_op = r['frf_op'] * F_op_cal / F_REF_N
+                    vr_op = v_rms(u_op, f_op)
+                    u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+                    vr_rd = v_rms(u_rd, f_rd_eff)
+                    cl_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
+                        'A_op (mm)': round(u_op, 5), 'vRMS_op (mm/s)': round(vr_op, 3),
+                        'ISO_op': classify(vr_op, ISO_ZONES)[0],
+                        'f_rd (Hz)': round(f_rd_eff, 2), 'A_rd (mm)': round(u_rd, 4),
+                        'vRMS_rd (mm/s)': round(vr_rd, 2), 'ISO_rd': classify(vr_rd, ISO_ZONES)[0]})
+                df_cl_r = pd.DataFrame(cl_rows)
+
+                ratio_min_r = df_cc_r['K_est/K_din'].min() if not df_cc_r.empty else float('nan')
+                dir_dom = (df_cc_r.loc[df_cc_r['FRF_op (mm/T)'].idxmax(), 'Dir']
+                           if not df_cc_r.empty else '-')
+                vop_max = df_cl_r['vRMS_op (mm/s)'].max() if not df_cl_r.empty else 0.0
+                vrd_max = df_cl_r['vRMS_rd (mm/s)'].max() if not df_cl_r.empty else 0.0
+                iso_op_w = classify(vop_max, ISO_ZONES)[0]
+                iso_rd_w = classify(vrd_max, ISO_ZONES)[0]
+                cc_cumple = (ratio_min_r >= 10) if ratio_min_r == ratio_min_r else True
+
+                # ════════ 4. RESUMEN EJECUTIVO ════════
+                add_h1("4. Resumen Ejecutivo")
                 add_para(
-                    f"Frecuencia de operación = {f_op:.2f} Hz | "
-                    f"F_op_V = {F_op_V} N/pata | F_op_H = {F_op_H} N/pata | "
-                    f"F_rd_V = {F_rd_V} N/pata | F_rd_H = {F_rd_H} N/pata"
-                )
+                    f"Se realizaron análisis Steady-State en SAP2000 sobre los puntos de apoyo de la "
+                    f"estructura de soporte, evaluando la condición de operación (régimen permanente a "
+                    f"{f_op:.2f} Hz / {f_op_rpm:.0f} RPM) y la condición transitoria de partida/parada "
+                    f"(f_rd ≈ {f_rd:.2f} Hz). Los principales hallazgos son:")
+                add_para(
+                    f"• Cortocircuito vibratorio: K_est/K_din = {ratio_min_r:.2f} "
+                    f"{'≥' if cc_cumple else '<'} 10 (ACI 351.3R-04). "
+                    f"{'Cumple.' if cc_cumple else 'No cumple: el aislador no logra desacoplar la máquina de la estructura.'}")
+                add_para(f"• Dirección dominante: {dir_dom} (mayor FRF en operación).")
+                add_para(
+                    f"• Clasificación ISO 20816-3: en operación el caso más desfavorable alcanza "
+                    f"v_RMS = {vop_max:.2f} mm/s ({iso_op_w}); en transitorio, "
+                    f"v_RMS = {vrd_max:.2f} mm/s ({iso_rd_w}).")
+
+                # ════════ 5. DEFINICIONES ════════
+                add_h1("5. Definiciones")
+                add_h2("Función de respuesta en frecuencia (FRF)")
+                add_para("La FRF (Steady-State de SAP2000) es la relación entre el desplazamiento "
+                         "complejo U(f) en un punto y la fuerza armónica F(f) aplicada, evaluada en cada "
+                         "frecuencia del barrido.")
+                add_h2("Ángulo de fase (φ)")
+                add_para("Para un sistema de 1 GDL, φ = −90° exactamente en resonancia (r = 1). En "
+                         "sistemas MDOF, la FRF superpone las contribuciones modales y φ(f) se obtiene de "
+                         "las partes real e imaginaria de H(f).")
+                add_h2("Cargas del fabricante y parámetros")
+                df_par = pd.DataFrame([
+                    {'Parámetro': 'Frecuencia de operación', 'Valor': f"{f_op:.2f} Hz ({f_op_rpm:.0f} RPM)"},
+                    {'Parámetro': 'Frecuencia transitorio f_rd', 'Valor': f"{f_rd:.2f} Hz"},
+                    {'Parámetro': 'Zona de exclusión', 'Valor': f"{f_excl_lo:.2f} – {f_excl_hi:.2f} Hz"},
+                    {'Parámetro': 'K_din aislador', 'Valor': f"{K_din:.0f} N/mm"},
+                    {'Parámetro': 'F_op (V / H) por apoyo', 'Valor': f"{F_op_V} / {F_op_H} N"},
+                    {'Parámetro': 'F_rd (V / H) por apoyo', 'Valor': f"{F_rd_V} / {F_rd_H} N"},
+                    {'Parámetro': 'Fuerza de referencia', 'Valor': f"{F_REF_N:.0f} N"},
+                ])
+                add_df_table(df_par, fs=10)
+
+                # ════════ 6. ANÁLISIS DE VIBRACIONES ════════
+                add_h1("6. Análisis de Vibraciones")
+                add_h2("6.1 Cortocircuito Vibratorio y Rigidez Relativa")
+                add_para("Criterio 10:1 (ACI 351.3R-04, §3.3): la rigidez dinámica de la estructura "
+                         "(K_est = F_ref / FRF_op) debe ser al menos 10 veces la del aislador (K_din) para "
+                         "que el aislamiento sea efectivo. El caso gobernante es el de mayor FRF_op.")
+                add_para(f"Resultado: K_est/K_din mínimo = {ratio_min_r:.2f}. "
+                         f"{'Cumple.' if cc_cumple else 'No cumple — cortocircuito vibratorio confirmado.'}")
+                add_df_table(df_cc_r)
+
+                add_h2("6.2 Análisis de Resonancia: Zona de Exclusión y Fase")
+                add_para(f"Zona de exclusión ACI 351.3R-04: {f_excl_lo:.2f} ≤ fn ≤ {f_excl_hi:.2f} Hz "
+                         f"(0.8·fop – 1.2·fop). La resonancia se confirma cuando el peak de |H(f)| cae en "
+                         f"la zona y la fase está próxima a ±90°.")
+                add_df_table(df_res)
+
+                add_h2("6.3 Distorsión Angular Dinámica")
+                dist_rows = []
+                for caso in sorted(set(r['caso'] for r in resultados.values())):
+                    fases = [(r['joint'], r['fase_op']) for (c, j), r in resultados.items() if c == caso]
+                    maxd = 0.0
+                    for i in range(len(fases)):
+                        for jx in range(i+1, len(fases)):
+                            d = abs(fases[i][1] - fases[jx][1]); d = 360-d if d > 180 else d
+                            maxd = max(maxd, d)
+                    dist_rows.append({'Caso': caso, 'N° apoyos': len(fases),
+                                      'Δφ máx entre apoyos (°)': round(maxd, 1)})
+                add_para("El desfase entre apoyos de una misma máquina impone torsión dinámica cíclica "
+                         "sobre el chasis. Se reporta el diferencial de fase máximo entre apoyos por caso "
+                         "(en operación):")
+                add_df_table(pd.DataFrame(dist_rows), fs=10)
+
+                add_h2("6.4 Criterios de Amplitud Admisible")
+                add_para("Las amplitudes reales se obtienen como A = FRF · F_real / F_ref, y la velocidad "
+                         "eficaz v_RMS = (A·2πf)/√2 se clasifica según ISO 20816-3. La operación se evalúa "
+                         "a fop; el transitorio, en f_rd.")
+                add_df_table(df_cl_r)
 
                 # Figuras (matplotlib)
                 if incluir_figs and resultados:
-                    add_h1("3. Gráficos")
+                    add_h2("Figura 6.1. FRF |U| por caso y nodo")
                     casos_uniq = sorted(set(r['caso'] for r in resultados.values()))
                     joints_uniq = sorted(set(r['joint'] for r in resultados.values()))
                     n_c = min(len(casos_uniq), 3)
@@ -1184,6 +1290,19 @@ with tab_report:
                     p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run = p_img.add_run()
                     run.add_picture(buf, width=Cm(15))
+
+                # ════════ 7. MEDIDAS DE CONTROL ════════
+                add_h1("7. Medidas de Control")
+                add_para("Según el resultado del criterio 10:1 y la clasificación de amplitudes, se "
+                         "plantean dos estrategias de mitigación:")
+                add_h2("Opción A — Refuerzo Estructural (High-Tuned)")
+                add_para("Aumentar la rigidez dinámica de la estructura de soporte (K_est) hasta cumplir "
+                         "K_est ≥ 10·K_din, llevando las frecuencias naturales locales por sobre la zona "
+                         "de exclusión. Implica rigidizar vigas/atiesadores de los apoyos.")
+                add_h2("Opción B — Cambio de Aislamiento (Low-Tuned)")
+                add_para("Adoptar aisladores más blandos (menor K_din) para bajar la frecuencia natural "
+                         "del sistema masa-aislador muy por debajo de la operación, mejorando la "
+                         "transmisibilidad. Requiere verificar deflexión estática y estabilidad.")
 
                 # Guardar y descargar
                 buf_doc = io.BytesIO()
