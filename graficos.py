@@ -154,6 +154,9 @@ with st.sidebar:
                                 help="F(f)=m·e·ω². Se evalúa la envolvente FRF(f)×F(f) en todo el barrido.")
         if U_gmm > 0:
             st.caption(f"A f_op implica F = {(U_gmm/1e6)*(2*math.pi*f_op)**2:.0f} N")
+        st.caption("F(f)=m·e·ω² (desbalance rotativo). Ref.: Arya, O'Neill & Pincus (1979); "
+                   "Den Hartog, *Mechanical Vibrations*. **Definición referencial** — "
+                   "reemplazar por la curva fuerza–frecuencia del fabricante cuando esté disponible.")
     else:
         U_gmm = 0.0
 
@@ -213,10 +216,11 @@ ISO_ZONES = [
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_data, tab_frf, tab_fase, tab_class, tab_dist, tab_report = st.tabs([
+tab_data, tab_frf, tab_fase, tab_corto, tab_class, tab_dist, tab_report = st.tabs([
     "📥 Datos SAP2000",
     "📈 FRF — Amplitud",
     "🔄 Análisis de Fase",
+    "🔗 Cortocircuito Vibratorio",
     "🗂️ Clasificación Richart / Blake / ISO",
     "🔀 Distorsión Angular",
     "📄 Reporte"
@@ -559,6 +563,76 @@ with tab_fase:
                 return "background-color:#F0FDF4; color:#16A34A"
             styled = df_res.style.map(color_diag, subset=['Diagnóstico'])
             st.dataframe(styled, use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: CORTOCIRCUITO VIBRATORIO
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_corto:
+    st.header("Cortocircuito Vibratorio — Rigidez relativa (ACI 351.3R-04)")
+    if not resultados:
+        st.info("Cargue datos para evaluar el cortocircuito vibratorio.")
+    else:
+        st.markdown(
+            "Criterio **10:1** (ACI 351.3R-04, §3.3): la rigidez dinámica de la estructura debe ser "
+            "≥ 10× la del aislador para que éste desacople la máquina. K_est se obtiene de la FRF en "
+            "operación:  **K_est = F_ref / FRF_op**. El caso gobernante es el de mayor FRF_op (menor rigidez)."
+        )
+        ratio_obj = st.number_input("Ratio objetivo (criterio)", value=10.0, step=1.0, format="%.0f")
+
+        rows_cc = []
+        for (caso, joint), r in resultados.items():
+            frf_op = r['frf_op']
+            if frf_op <= 0:
+                continue
+            k_est = F_REF_N / frf_op
+            rows_cc.append({
+                'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
+                'FRF_op (mm/T)': round(frf_op, 4),
+                'f_pk (Hz)': round(r['f_pk'], 1),
+                'K_est (N/mm)': round(k_est, 0),
+                'K_est/K_din': round(k_est / K_din, 2),
+                'Cumple 10:1': '✓ Sí' if k_est / K_din >= ratio_obj else '✗ No',
+            })
+        df_cc = pd.DataFrame(rows_cc)
+        if df_cc.empty:
+            st.warning("No hay FRF en operación válida (>0) para calcular K_est.")
+        else:
+            gov = df_cc.loc[df_cc['K_est/K_din'].idxmin()]
+            ratio_min = gov['K_est/K_din']
+            cumple = ratio_min >= ratio_obj
+
+            m1, m2 = st.columns(2)
+            m1.metric("Ratio mínimo K_est/K_din", f"{ratio_min:.2f}")
+            m2.metric("K_din aislador", f"{K_din:.0f} N/mm")
+            if cumple:
+                st.success(f"✓ Cumple: K_est/K_din = {ratio_min:.2f} ≥ {ratio_obj:.0f}.")
+            else:
+                st.error(
+                    f"✗ No cumple (cortocircuito): K_est/K_din = {ratio_min:.2f} < {ratio_obj:.0f}, "
+                    f"gobernado por {gov['Caso']} / {gov['Joint']} (dir {gov['Dir']}). La estructura "
+                    f"tiene solo el {ratio_min/ratio_obj*100:.0f}% de la rigidez mínima; el aislador "
+                    f"no logra desacoplar la máquina de la estructura."
+                )
+
+            def color_cc(v):
+                return ("background-color:#FEE2E2;color:#C0392B;font-weight:bold"
+                        if "No" in str(v) else "background-color:#F0FDF4;color:#166534")
+            st.dataframe(df_cc.style.map(color_cc, subset=['Cumple 10:1']),
+                         use_container_width=True, hide_index=True, height=320)
+
+            st.subheader("Transmisibilidad en el cruce de resonancia")
+            st.caption("Fracción de fuerza que cruza el aislador hacia la estructura: "
+                       "T = √(1+(2ξr)²) / √((1−r²)²+(2ξr)²), con r = f_op/f_res.")
+            t1, t2 = st.columns(2)
+            with t1:
+                xi = st.number_input("Amortiguamiento ξ (%)", value=3.0, step=0.5, format="%.1f") / 100
+            with t2:
+                f_res = st.number_input("f_res (Hz)", value=float(gov['f_pk (Hz)']), step=0.1, format="%.1f")
+            rr = f_op / f_res if f_res > 0 else 0.0
+            T = math.sqrt(1 + (2*xi*rr)**2) / math.sqrt((1 - rr**2)**2 + (2*xi*rr)**2)
+            st.metric("Transmisibilidad T", f"{T:.2f}")
+            st.caption(f"r = f_op/f_res = {f_op:.2f}/{f_res:.1f} = {rr:.3f}  →  ~{min(T,9.99)*100:.0f}% de la "
+                       f"fuerza se transmite a la estructura.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: CLASIFICACIÓN RICHART / BLAKE / ISO
