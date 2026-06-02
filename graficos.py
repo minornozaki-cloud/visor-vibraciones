@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import io, math, warnings
+import io, math, warnings, json
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -74,6 +74,14 @@ def v_peak(amp_mm, f_hz):
 
 def v_rms(amp_mm, f_hz):
     return v_peak(amp_mm, f_hz) / math.sqrt(2)
+
+def auto_dir(caso):
+    """Detección automática de columna de respuesta y dirección desde el nombre del caso."""
+    caso_u = str(caso).upper()
+    if '_X' in caso_u or caso_u.endswith('X'): return ('U1', 'X')
+    if '_Y' in caso_u or caso_u.endswith('Y'): return ('U2', 'Y')
+    if '_Z' in caso_u or caso_u.endswith('Z'): return ('U3', 'Z')
+    return ('U1', str(caso))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
@@ -242,6 +250,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
     file_bytes = uploaded.read() if uploaded else None
     file_name  = uploaded.name  if uploaded else ""
     df_raw = load_data(file_bytes, file_name, manual_data)
+    dir_override = {}
 
     if not df_raw.empty:
         st.success(f"✅ {len(df_raw)} filas cargadas | "
@@ -260,6 +269,24 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
         df_raw = df_raw[df_raw['OutputCase'].isin(casos_sel) &
                         df_raw['Joint'].isin(joints_sel)]
         st.dataframe(df_raw.head(30), use_container_width=True, height=250, hide_index=True)
+
+        with st.expander("🧭 Mapeo de dirección por caso (override)"):
+            st.caption("Columna de respuesta (U1/U2/U3) y etiqueta de dirección (X/Y/Z) por caso. "
+                       "Por defecto se detecta del nombre del caso; Z = vertical (usa F vertical).")
+            dir_opts = ['U1', 'U2', 'U3']; lbl_opts = ['X', 'Y', 'Z']
+            for caso in casos_sel:
+                ac_col, ac_dir = auto_dir(caso)
+                cc1, cc2, cc3 = st.columns([2, 1, 1])
+                with cc1: st.markdown(f"**{caso}**")
+                with cc2:
+                    col_sel = st.selectbox("Columna", dir_opts,
+                                           index=dir_opts.index(ac_col),
+                                           key=f"colmap_{caso}", label_visibility="collapsed")
+                with cc3:
+                    di = lbl_opts.index(ac_dir) if ac_dir in lbl_opts else 0
+                    dir_sel = st.selectbox("Dir", lbl_opts, index=di,
+                                           key=f"dirmap_{caso}", label_visibility="collapsed")
+                dir_override[caso] = (col_sel, dir_sel)
     else:
         st.warning("Cargue datos para continuar.")
         casos_sel = []; joints_sel = []; df_raw = pd.DataFrame()
@@ -268,7 +295,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
 # PROCESAMIENTO CENTRAL
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_, factor_despl_):
+def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_, factor_despl_, dir_override_json):
     if not df_raw_json:
         return {}, pd.DataFrame()
     df = pd.read_json(io.StringIO(df_raw_json))
@@ -276,18 +303,14 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
     real_df = df[df['StepType']=='Real at Freq'].copy()
     imag_df = df[df['StepType']=='Imag at Freq'].copy()
 
-    # Mapeo case → (col_resp, dir_label)
+    # Mapeo case → (col_resp, dir_label): override del usuario o detección automática
+    dir_ovr = json.loads(dir_override_json) if dir_override_json else {}
     case_dir = {}
     for caso in df['OutputCase'].unique():
-        caso_u = caso.upper()
-        if '_X' in caso_u or caso_u.endswith('X'):
-            case_dir[caso] = ('U1', 'X')
-        elif '_Y' in caso_u or caso_u.endswith('Y'):
-            case_dir[caso] = ('U2', 'Y')
-        elif '_Z' in caso_u or caso_u.endswith('Z'):
-            case_dir[caso] = ('U3', 'Z')
+        if str(caso) in dir_ovr:
+            case_dir[caso] = tuple(dir_ovr[str(caso)])
         else:
-            case_dir[caso] = ('U1', caso)
+            case_dir[caso] = auto_dir(caso)
 
     resultados = {}  # {(caso, joint): {...}}
 
@@ -364,7 +387,8 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
 
 if not df_raw.empty:
     resultados, df_res = procesar(
-        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi, factor_despl
+        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi, factor_despl,
+        json.dumps({str(k): list(v) for k, v in dir_override.items()}, sort_keys=True)
     )
 else:
     resultados, df_res = {}, pd.DataFrame()
