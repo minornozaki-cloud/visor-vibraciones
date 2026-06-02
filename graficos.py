@@ -623,10 +623,12 @@ with tab_class:
         if (modo_fuerza_tr.startswith("Valor") and resultados
                 and not any(r['f_rd_en_rango'] for r in resultados.values())):
             f_min_d = df_raw['Freq'].min(); f_max_d = df_raw['Freq'].max()
+            f_borde = f_min_d if f_rd < f_min_d else f_max_d
             st.warning(
                 f"⚠️ La frecuencia de transitorio f_rd = {f_rd:.2f} Hz está **fuera del rango "
-                f"de datos cargados** ({f_min_d:.1f}–{f_max_d:.1f} Hz). Los resultados de "
-                f"transitorio usan la FRF del extremo más cercano y **no son válidos**. "
+                f"de datos cargados** ({f_min_d:.1f}–{f_max_d:.1f} Hz). Se toma el extremo más "
+                f"cercano disponible: **{f_borde:.1f} Hz** (la FRF se evalúa ahí, no en f_rd), por "
+                f"lo que los resultados de transitorio **no son válidos**. "
                 f"Sube un barrido SAP2000 que incluya la baja frecuencia (0 → ~50 Hz)."
             )
 
