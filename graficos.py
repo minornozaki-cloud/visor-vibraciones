@@ -84,18 +84,22 @@ def auto_dir(caso):
     return ('U1', str(caso))
 
 def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi=None):
-    """Amplitud (mm) y frecuencia (Hz) del transitorio.
+    """Respuesta del transitorio (partida/parada).
 
-    Busca el PEOR caso de respuesta |H(f)|·F(f) a lo largo de la ventana de
-    barrido [f_tr_lo, f_tr_hi] que el equipo recorre en partida/parada — no solo
-    el punto f_rd. Así captura cualquier peak estructural que se cruce al frenar.
-    - Valor fijo:      F(f) = F_rd constante en la ventana (conservador).
-    - Curva desbalance: F(f) = m·e·ω², con m·e[kg·m] = U[g·mm]/1e6.
-    Devuelve (amplitud_mm, frecuencia_del_peor_caso).
+    Recorre la ventana de barrido [f_tr_lo, f_tr_hi] y devuelve el PEOR caso de
+    amplitud u(f) = |H(f)|·F(f)/F_REF — no solo el punto f_rd.
+    - Valor fijo:      F(f) = F_rd constante en toda la ventana (conservador). El
+      máximo de u(f) coincide entonces con el máximo de |H(f)|.
+    - Curva desbalance: F(f) = m·e·ω², con m·e[kg·m] = U[g·mm]/1e6. El máximo de
+      u(f) pondera FRF y fuerza (la fuerza crece con f²).
+    Si la ventana no solapa con los datos, cae al punto más cercano a f_rd.
+
+    Devuelve (amplitud_mm, f_peor[Hz], FRF_usada[mm/u.carga], F_usada[N]),
+    todo evaluado en la frecuencia del peor caso DENTRO de este nodo/caso.
     """
     freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
     if freqs.size == 0:
-        return 0.0, r['f_rd']
+        return 0.0, r['f_rd'], 0.0, float(F_rd_cal)
     lo = freqs.min() if f_tr_lo is None else min(f_tr_lo, f_tr_hi)
     hi = freqs.max() if f_tr_hi is None else max(f_tr_lo, f_tr_hi)
     win = (freqs >= lo) & (freqs <= hi)
@@ -110,7 +114,7 @@ def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi
         F_arr = np.full(fw.shape, float(F_rd_cal))
     u_arr = hw * F_arr / F_REF
     idx = int(np.argmax(u_arr))
-    return float(u_arr[idx]), float(fw[idx])
+    return float(u_arr[idx]), float(fw[idx]), float(hw[idx]), float(F_arr[idx])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
@@ -695,7 +699,8 @@ with tab_class:
             i_op_lbl, i_op_col = classify(vr_op, ISO_ZONES)
 
             # Transitorio: valor fijo en f_rd, o envolvente de la curva de desbalance
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+            u_rd, f_rd_eff, frf_rd_used, F_rd_used = transitorio_uf(
+                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             vp_rd = v_peak(u_rd, f_rd_eff)
             vr_rd = v_rms(u_rd,  f_rd_eff)
             r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
@@ -705,15 +710,19 @@ with tab_class:
             rows_class.append({
                 'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
                 'f_peak (Hz)': round(r['f_pk'], 1),
-                # Operación
+                # Operación: A_op = FRF_op · F_op / F_ref, evaluada en f_op
+                'FRF_op (mm/T)': round(r['frf_op'], 5),
+                'F_op (N)': round(F_op_cal, 0),
                 'A_op (mm)': round(u_op, 5),
                 'v_op (mm/s)': round(vp_op, 3),
                 'vRMS_op (mm/s)': round(vr_op, 3),
                 'Richart_op': r_op_lbl,
                 'Blake_op': b_op_lbl,
                 'ISO_op': i_op_lbl,
-                # Transitorio (f_rd o frecuencia de envolvente)
+                # Transitorio: A_rd = FRF_rd · F_rd / F_ref, en la frecuencia del peor caso
                 'f_rd (Hz)': round(f_rd_eff, 2),
+                'FRF_rd (mm/T)': round(frf_rd_used, 5),
+                'F_rd (N)': round(F_rd_used, 0),
                 'A_rd (mm)': round(u_rd, 4),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
@@ -751,21 +760,50 @@ with tab_class:
         # Mostrar con colores
         col_crit = ['Richart_op','Blake_op','ISO_op','Richart_rd','ISO_rd']
         def color_class(val):
+            # Fija SIEMPRE color de fondo y de texto (oscuro) para asegurar contraste
+            # tanto en tema claro como oscuro de Streamlit.
             val = str(val)
             if any(x in val for x in ["Peligro","Zona D","Severa","E — "]):
-                return "background-color:#FEE2E2;color:#C0392B;font-weight:bold"
+                return "background-color:#FEE2E2;color:#991B1B;font-weight:bold"
             if any(x in val for x in ["Precaución","Límite","Zona C","C — ","D — ","Molesta"]):
-                return "background-color:#FEF3C7;color:#D97706"
+                return "background-color:#FEF3C7;color:#92400E;font-weight:bold"
             if any(x in val for x in ["Fácilmente","B — ","Zona B"]):
-                return "background-color:#FFFBEB"
+                return "background-color:#FEF9C3;color:#854D0E"
             if any(x in val for x in ["No perceptible","Zona A","A — ","Apenas"]):
-                return "background-color:#F0FDF4;color:#166534"
-            return ""
+                return "background-color:#DCFCE7;color:#166534"
+            return "color:#1F2937"
         
         st.dataframe(
             df_class.style.map(color_class, subset=col_crit),
             use_container_width=True, height=400, hide_index=True
         )
+
+        with st.expander("ℹ️ Cómo se calculan las amplitudes (operación y transitorio)"):
+            st.markdown(
+                "**Amplitud** en cada caso: $A = \\mathrm{FRF} \\cdot F / F_{ref}$, con la FRF "
+                "[mm/T] leída de SAP2000 y $F_{ref}$ = "
+                f"{F_REF_N:.0f} N (la fuerza unitaria con que se normalizó la FRF).\n\n"
+                "**Operación** (`_op`): se evalúa **en f_op**. `FRF_op` es la FRF en esa frecuencia "
+                "y se multiplica por la **fuerza de operación** `F_op` (vertical si Dir = Z, "
+                "horizontal en caso contrario).\n\n"
+                "**Transitorio** (`_rd`): se recorre la **ventana de barrido** "
+                f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) y se toma el "
+                "**peor caso** de $A(f)=\\mathrm{FRF}(f)\\cdot F(f)/F_{ref}$. La columna `f_rd (Hz)` "
+                "es la frecuencia donde ocurre ese peor caso, y `FRF_rd` / `F_rd` son los valores "
+                "usados ahí. Según el **modelo de fuerza transitoria** elegido en el sidebar:\n\n"
+                "- **Valor fijo (F_rd):** $F(f)=F_{rd}$ **constante** en toda la ventana (la "
+                "**fuerza dinámica máxima** del fabricante, vertical u horizontal según Dir). Como "
+                "la fuerza no varía, el peor caso cae en la **frecuencia de mayor FRF** dentro de "
+                "la ventana — es un criterio conservador.\n"
+                "- **Curva desbalance:** $F(f)=m e\\,\\omega^2$ crece con la frecuencia, así que el "
+                "peor caso pondera FRF **y** fuerza; la frecuencia resultante suele desplazarse "
+                "hacia arriba. No se evalúa en un punto fijo: sigue siendo el **máximo del tramo**.\n\n"
+                "**Cobertura de datos:** si la ventana solo solapa parcialmente con el barrido SAP "
+                "(p. ej. f_rd por debajo del mínimo de datos), el peor caso se busca **dentro del "
+                "tramo con datos** — no necesariamente en el extremo. Solo si la ventana queda "
+                "totalmente fuera del rango se cae al punto más cercano disponible (ver aviso "
+                "amarillo). El cálculo es **por nodo y caso**: cada fila tiene su propio peor caso."
+            )
 
         # Gráfico de barras v_RMS para ISO
         st.subheader("ISO 20816-3 — v_RMS por nodo y dirección")
@@ -855,7 +893,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -935,7 +973,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -1197,7 +1235,7 @@ with tab_report:
                     F_rd_cal = F_rd_V if r['dir'] == 'Z' else F_rd_H
                     u_op = r['frf_op'] * F_op_cal / F_REF_N
                     vr_op = v_rms(u_op, f_op)
-                    u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+                    u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
                     vr_rd = v_rms(u_rd, f_rd_eff)
                     cl_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
                         'A_op (mm)': round(u_op, 5), 'vRMS_op (mm/s)': round(vr_op, 3),
