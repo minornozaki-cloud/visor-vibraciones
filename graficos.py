@@ -83,15 +83,24 @@ def auto_dir(caso):
     if '_Z' in caso_u or caso_u.endswith('Z'): return ('U3', 'Z')
     return ('U1', str(caso))
 
-def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi=None):
-    """Respuesta del transitorio (partida/parada).
+def _fuerza_tr(modo_fuerza, f_arr, F_rd_cal, U_gmm, n_apoyos):
+    """Fuerza dinámica del transitorio en cada frecuencia [N].
+    - Valor fijo:      F_rd del fabricante, constante (ya viene por apoyo).
+    - Curva desbalance: F=m·e·ω² (TOTAL del rotor) repartido entre n_apoyos."""
+    if modo_fuerza.startswith("Curva"):
+        return (U_gmm / 1e6) * (2 * np.pi * f_arr) ** 2 / max(int(n_apoyos), 1)
+    return np.full(np.asarray(f_arr, float).shape, float(F_rd_cal))
+
+
+def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi=None, n_apoyos=1):
+    """Respuesta del transitorio (partida/parada) — PEOR caso del tramo.
 
     Recorre la ventana de barrido [f_tr_lo, f_tr_hi] y devuelve el PEOR caso de
     amplitud u(f) = |H(f)|·F(f)/F_REF — no solo el punto f_rd.
     - Valor fijo:      F(f) = F_rd constante en toda la ventana (conservador). El
       máximo de u(f) coincide entonces con el máximo de |H(f)|.
-    - Curva desbalance: F(f) = m·e·ω², con m·e[kg·m] = U[g·mm]/1e6. El máximo de
-      u(f) pondera FRF y fuerza (la fuerza crece con f²).
+    - Curva desbalance: F(f) = m·e·ω²/n_apoyos. El máximo de u(f) pondera FRF y
+      fuerza (la fuerza crece con f²).
     Si la ventana no solapa con los datos, cae al punto más cercano a f_rd.
 
     Devuelve (amplitud_mm, f_peor[Hz], FRF_usada[mm/u.carga], F_usada[N]),
@@ -108,13 +117,26 @@ def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi
         idx0 = int(np.argmin(np.abs(freqs - r['f_rd'])))
         win = np.zeros(len(freqs), bool); win[idx0] = True
     fw = freqs[win]; hw = frf[win]
-    if modo_fuerza.startswith("Curva"):
-        F_arr = (U_gmm / 1e6) * (2 * np.pi * fw) ** 2
-    else:
-        F_arr = np.full(fw.shape, float(F_rd_cal))
+    F_arr = _fuerza_tr(modo_fuerza, fw, F_rd_cal, U_gmm, n_apoyos)
     u_arr = hw * F_arr / F_REF
     idx = int(np.argmax(u_arr))
     return float(u_arr[idx]), float(fw[idx]), float(hw[idx]), float(F_arr[idx])
+
+
+def transitorio_en_frd(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, n_apoyos=1):
+    """Respuesta evaluada EN EL PUNTO de cruce del aislador f_rd (no el peak del
+    tramo). Devuelve (amplitud_mm, f_usada[Hz], en_rango[bool]). Si f_rd cae fuera
+    de los datos, usa el punto más cercano y marca en_rango=False (valor no fiable).
+    """
+    freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
+    if freqs.size == 0:
+        return float('nan'), r['f_rd'], False
+    f_rd = r['f_rd']
+    en_rango = bool(freqs.min() <= f_rd <= freqs.max())
+    idx = int(np.argmin(np.abs(freqs - f_rd)))
+    f_used = float(freqs[idx]); h = float(frf[idx])
+    F = float(_fuerza_tr(modo_fuerza, np.array([f_used]), F_rd_cal, U_gmm, n_apoyos)[0])
+    return h * F / F_REF, f_used, en_rango
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
@@ -168,14 +190,20 @@ with st.sidebar:
                                   ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"])
     if modo_fuerza_tr.startswith("Curva"):
         U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
-                                help="F(f)=m·e·ω². Se evalúa la envolvente FRF(f)×F(f) en todo el barrido.")
+                                help="Desbalance TOTAL del rotor. F(f)=m·e·ω². Estímalo con ISO 1940-1: "
+                                     "U = m[kg]·1000·G[mm/s]/ω, con G el grado de balanceo (G2.5, G6.3…).")
+        n_apoyos = st.number_input("N° de apoyos (reparto por pata)", value=4, min_value=1, step=1,
+                                   help="La FRF de SAP está normalizada por apoyo (1 ton/pata), así que "
+                                        "la fuerza de desbalance total se divide entre los apoyos.")
         if U_gmm > 0:
-            st.caption(f"A f_op implica F = {(U_gmm/1e6)*(2*math.pi*f_op)**2:.0f} N")
+            F_op_total = (U_gmm/1e6)*(2*math.pi*f_op)**2
+            st.caption(f"A f_op: F_total = {F_op_total:.0f} N → {F_op_total/n_apoyos:.0f} N por apoyo")
         st.caption("F(f)=m·e·ω² (desbalance rotativo). Ref.: Arya, O'Neill & Pincus (1979); "
                    "Den Hartog, *Mechanical Vibrations*. **Definición referencial** — "
                    "reemplazar por la curva fuerza–frecuencia del fabricante cuando esté disponible.")
     else:
         U_gmm = 0.0
+        n_apoyos = 1
 
     st.markdown("**Ventana del transitorio (barrido)**")
     auto_win = st.checkbox("Auto: f_rd → f_op", value=True,
@@ -700,7 +728,10 @@ with tab_class:
 
             # Transitorio: valor fijo en f_rd, o envolvente de la curva de desbalance
             u_rd, f_rd_eff, frf_rd_used, F_rd_used = transitorio_uf(
-                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
+            # Valor puntual en el cruce del aislador f_rd (informativo)
+            u_frd, f_frd, frd_en_rango = transitorio_en_frd(
+                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, n_apoyos)
             vp_rd = v_peak(u_rd, f_rd_eff)
             vr_rd = v_rms(u_rd,  f_rd_eff)
             r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
@@ -719,11 +750,14 @@ with tab_class:
                 'Richart_op': r_op_lbl,
                 'Blake_op': b_op_lbl,
                 'ISO_op': i_op_lbl,
-                # Transitorio: A_rd = FRF_rd · F_rd / F_ref, en la frecuencia del peor caso
-                'f_rd (Hz)': round(f_rd_eff, 2),
-                'FRF_rd (mm/T)': round(frf_rd_used, 5),
-                'F_rd (N)': round(F_rd_used, 0),
-                'A_rd (mm)': round(u_rd, 4),
+                # Transitorio — PEOR caso del tramo: A_peor = FRF_peor · F_peor / F_ref
+                'f_peor (Hz)': round(f_rd_eff, 2),
+                'FRF_peor (mm/T)': round(frf_rd_used, 5),
+                'F_peor (N)': round(F_rd_used, 0),
+                'A_peor (mm)': round(u_rd, 4),
+                # Transitorio — valor PUNTUAL en el cruce del aislador f_rd (informativo;
+                # NaN si f_rd cae fuera del rango de datos cargados)
+                'A@f_rd (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
                 'Richart_rd': r_rd_lbl,
@@ -786,23 +820,26 @@ with tab_class:
                 "**Operación** (`_op`): se evalúa **en f_op**. `FRF_op` es la FRF en esa frecuencia "
                 "y se multiplica por la **fuerza de operación** `F_op` (vertical si Dir = Z, "
                 "horizontal en caso contrario).\n\n"
-                "**Transitorio** (`_rd`): se recorre la **ventana de barrido** "
-                f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) y se toma el "
-                "**peor caso** de $A(f)=\\mathrm{FRF}(f)\\cdot F(f)/F_{ref}$. La columna `f_rd (Hz)` "
-                "es la frecuencia donde ocurre ese peor caso, y `FRF_rd` / `F_rd` son los valores "
-                "usados ahí. Según el **modelo de fuerza transitoria** elegido en el sidebar:\n\n"
-                "- **Valor fijo (F_rd):** $F(f)=F_{rd}$ **constante** en toda la ventana (la "
-                "**fuerza dinámica máxima** del fabricante, vertical u horizontal según Dir). Como "
-                "la fuerza no varía, el peor caso cae en la **frecuencia de mayor FRF** dentro de "
-                "la ventana — es un criterio conservador.\n"
-                "- **Curva desbalance:** $F(f)=m e\\,\\omega^2$ crece con la frecuencia, así que el "
-                "peor caso pondera FRF **y** fuerza; la frecuencia resultante suele desplazarse "
-                "hacia arriba. No se evalúa en un punto fijo: sigue siendo el **máximo del tramo**.\n\n"
-                "**Cobertura de datos:** si la ventana solo solapa parcialmente con el barrido SAP "
-                "(p. ej. f_rd por debajo del mínimo de datos), el peor caso se busca **dentro del "
-                "tramo con datos** — no necesariamente en el extremo. Solo si la ventana queda "
-                "totalmente fuera del rango se cae al punto más cercano disponible (ver aviso "
-                "amarillo). El cálculo es **por nodo y caso**: cada fila tiene su propio peor caso."
+                "**Transitorio:** se reportan **dos lecturas** del mismo barrido:\n\n"
+                "1. **Peor caso del tramo** (`_peor`): se recorre la **ventana de barrido** "
+                f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) y se toma el máximo "
+                "de $A(f)=\\mathrm{FRF}(f)\\cdot F(f)/F_{ref}$. `f_peor` es la frecuencia donde "
+                "ocurre, y `FRF_peor`/`F_peor` los valores usados ahí. **Esta es la que clasifica** "
+                "(Richart/ISO `_rd`) por ser conservadora.\n"
+                "2. **Valor puntual en el cruce del aislador** (`A@f_rd`): la respuesta evaluada "
+                f"exactamente en f_rd = {f_rd:.2f} Hz. Es **NaN** si f_rd cae fuera de los datos "
+                "cargados (no hay FRF en esa frecuencia).\n\n"
+                "Según el **modelo de fuerza transitoria** del sidebar:\n\n"
+                "- **Valor fijo (F_rd):** $F(f)=F_{rd}$ **constante** = fuerza dinámica máxima del "
+                "fabricante (vertical u horizontal según Dir, ya por apoyo). El peor caso cae en la "
+                "**frecuencia de mayor FRF** del tramo.\n"
+                "- **Curva desbalance:** $F(f)=m e\\,\\omega^2 / N_{apoyos}$ (desbalance total del "
+                "rotor **repartido entre los apoyos**). Crece con $f^2$, así que el peor caso "
+                "pondera FRF y fuerza y suele desplazarse hacia arriba.\n\n"
+                "**Cobertura de datos:** si la ventana solo solapa parcialmente con el barrido SAP, "
+                "el peor caso se busca **dentro del tramo con datos** — no en el extremo. Solo si la "
+                "ventana queda totalmente fuera se cae al punto más cercano (ver aviso amarillo). "
+                "Todo es **por nodo y caso**: cada fila tiene su propio peor caso."
             )
 
         # Gráfico de barras v_RMS para ISO
@@ -893,7 +930,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -973,7 +1010,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+            u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -1235,7 +1272,7 @@ with tab_report:
                     F_rd_cal = F_rd_V if r['dir'] == 'Z' else F_rd_H
                     u_op = r['frf_op'] * F_op_cal / F_REF_N
                     vr_op = v_rms(u_op, f_op)
-                    u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
+                    u_rd, f_rd_eff, _, _ = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
                     vr_rd = v_rms(u_rd, f_rd_eff)
                     cl_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
                         'A_op (mm)': round(u_op, 5), 'vRMS_op (mm/s)': round(vr_op, 3),
