@@ -83,21 +83,34 @@ def auto_dir(caso):
     if '_Z' in caso_u or caso_u.endswith('Z'): return ('U3', 'Z')
     return ('U1', str(caso))
 
-def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF):
+def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi=None):
     """Amplitud (mm) y frecuencia (Hz) del transitorio.
-    - Valor fijo: FRF en f_rd × F_rd.
-    - Curva desbalance: envolvente FRF(f)×F(f), F(f)=m·e·ω², m·e[kg·m]=U[g·mm]/1e6.
+
+    Busca el PEOR caso de respuesta |H(f)|·F(f) a lo largo de la ventana de
+    barrido [f_tr_lo, f_tr_hi] que el equipo recorre en partida/parada — no solo
+    el punto f_rd. Así captura cualquier peak estructural que se cruce al frenar.
+    - Valor fijo:      F(f) = F_rd constante en la ventana (conservador).
+    - Curva desbalance: F(f) = m·e·ω², con m·e[kg·m] = U[g·mm]/1e6.
+    Devuelve (amplitud_mm, frecuencia_del_peor_caso).
     """
+    freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
+    if freqs.size == 0:
+        return 0.0, r['f_rd']
+    lo = freqs.min() if f_tr_lo is None else min(f_tr_lo, f_tr_hi)
+    hi = freqs.max() if f_tr_hi is None else max(f_tr_lo, f_tr_hi)
+    win = (freqs >= lo) & (freqs <= hi)
+    if not win.any():
+        # Ventana sin datos: cae al punto más cercano a f_rd
+        idx0 = int(np.argmin(np.abs(freqs - r['f_rd'])))
+        win = np.zeros(len(freqs), bool); win[idx0] = True
+    fw = freqs[win]; hw = frf[win]
     if modo_fuerza.startswith("Curva"):
-        freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
-        if freqs.size == 0:
-            return 0.0, r['f_rd']
-        F_arr = (U_gmm / 1e6) * (2 * np.pi * freqs) ** 2
-        u_arr = frf * F_arr / F_REF
-        idx = int(np.argmax(u_arr))
-        return float(u_arr[idx]), float(freqs[idx])
-    u = r['frf_rd'] * F_rd_cal / F_REF
-    return u, r['f_rd']
+        F_arr = (U_gmm / 1e6) * (2 * np.pi * fw) ** 2
+    else:
+        F_arr = np.full(fw.shape, float(F_rd_cal))
+    u_arr = hw * F_arr / F_REF
+    idx = int(np.argmax(u_arr))
+    return float(u_arr[idx]), float(fw[idx])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
@@ -160,13 +173,24 @@ with st.sidebar:
     else:
         U_gmm = 0.0
 
-    st.markdown("**Banda de detección de peak estructural**")
-    col_pb1, col_pb2 = st.columns(2)
-    with col_pb1:
-        f_band_lo = st.number_input("f mín (Hz)", value=40.0, step=5.0, format="%.0f")
-    with col_pb2:
-        f_band_hi = st.number_input("f máx (Hz)", value=80.0, step=5.0, format="%.0f")
-    st.caption("Rango donde se busca la resonancia estructural cercana a operación.")
+    st.markdown("**Ventana del transitorio (barrido)**")
+    auto_win = st.checkbox("Auto: f_rd → f_op", value=True,
+                           help="Tramo que el equipo recorre en partida/parada. "
+                                "El peak transitorio se busca aquí, no solo en f_rd.")
+    if auto_win:
+        f_tr_lo, f_tr_hi = min(f_rd, f_op), max(f_rd, f_op)
+        st.caption(f"Ventana = {f_tr_lo:.2f} – {f_tr_hi:.2f} Hz")
+    else:
+        col_pb1, col_pb2 = st.columns(2)
+        with col_pb1:
+            f_tr_lo = st.number_input("f inf (Hz)", value=float(round(min(f_rd, f_op), 2)),
+                                      step=0.5, format="%.2f")
+        with col_pb2:
+            f_tr_hi = st.number_input("f sup (Hz)", value=float(round(max(f_rd, f_op), 2)),
+                                      step=0.5, format="%.2f")
+    st.caption("Se busca el peor |H(f)|·F(f) en este tramo. Puedes abarcar también la "
+               "zona de exclusión si es relevante. El peak de **operación** se evalúa "
+               "aparte, dentro de la zona de exclusión.")
 
     st.divider()
     st.markdown("**Zona de exclusión**")
@@ -325,7 +349,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
 # PROCESAMIENTO CENTRAL
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_band_hi_, factor_despl_, dir_override_json):
+def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, factor_despl_, dir_override_json):
     if not df_raw_json:
         return {}, pd.DataFrame()
     df = pd.read_json(io.StringIO(df_raw_json))
@@ -359,8 +383,12 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
                 rj[col_resp].values if not rj.empty else np.zeros_like(freqs)
             ))
 
-            mask = (freqs >= f_band_lo_) & (freqs <= f_band_hi_)
-            if not mask.any(): mask = np.ones(len(freqs), bool)
+            # Peak de OPERACIÓN: se busca el máximo de |H(f)| DENTRO de la zona de
+            # exclusión [0.8·fop, 1.2·fop]. La frecuencia de operación es un único
+            # valor; lo que importa es si una resonancia estructural cae en esa franja.
+            mask_zona = (freqs >= f_excl_lo_) & (freqs <= f_excl_hi_)
+            zona_con_datos = bool(mask_zona.any())
+            mask = mask_zona if zona_con_datos else np.ones(len(freqs), bool)
 
             idx_pk  = np.argmax(frf_mm[mask])
             f_pk    = freqs[mask][idx_pk]
@@ -377,17 +405,19 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
             fase_rd = fase_deg[idx_rd]
             f_rd_en_rango = bool(freqs.min() <= f_rd_ <= freqs.max())
 
-            en_zona = f_excl_lo_ <= f_pk <= f_excl_hi_
+            # El peak ya está en la zona de exclusión (por construcción de la máscara).
+            # La resonancia se confirma con el ángulo de fase ≈ 90° y amplitud relevante.
+            en_zona = zona_con_datos
             dist_90 = abs(abs(fase_pk) - 90)
 
-            if dist_90 < 15 and en_zona and frf_pk > 0.05:
+            if not zona_con_datos:
+                diagnostico = "Sin datos en zona excl."
+            elif dist_90 < 15 and frf_pk > 0.05:
                 diagnostico = "Resonancia confirmada"
-            elif dist_90 < 30 and en_zona:
+            elif dist_90 < 30 and frf_pk > 0.05:
                 diagnostico = "Probable"
-            elif en_zona:
-                diagnostico = "Posible"
             else:
-                diagnostico = "Sin resonancia en zona"
+                diagnostico = "Sin resonancia clara"
 
             resultados[(caso, joint)] = {
                 'caso': caso, 'joint': joint, 'dir': dir_lbl,
@@ -417,7 +447,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, f_band_lo_, f_ba
 
 if not df_raw.empty:
     resultados, df_res = procesar(
-        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, f_band_lo, f_band_hi, factor_despl,
+        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, factor_despl,
         json.dumps({str(k): list(v) for k, v in dir_override.items()}, sort_keys=True)
     )
 else:
@@ -665,7 +695,7 @@ with tab_class:
             i_op_lbl, i_op_col = classify(vr_op, ISO_ZONES)
 
             # Transitorio: valor fijo en f_rd, o envolvente de la curva de desbalance
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             vp_rd = v_peak(u_rd, f_rd_eff)
             vr_rd = v_rms(u_rd,  f_rd_eff)
             r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
@@ -693,18 +723,30 @@ with tab_class:
 
         df_class = pd.DataFrame(rows_class)
 
-        # Advertencia: f_rd fuera del rango de datos cargados (solo modo valor fijo)
-        if (modo_fuerza_tr.startswith("Valor") and resultados
-                and not any(r['f_rd_en_rango'] for r in resultados.values())):
+        # Advertencia: la ventana del transitorio no queda cubierta por los datos cargados
+        if resultados:
             f_min_d = df_raw['Freq'].min(); f_max_d = df_raw['Freq'].max()
-            f_borde = f_min_d if f_rd < f_min_d else f_max_d
-            st.warning(
-                f"⚠️ La frecuencia de transitorio f_rd = {f_rd:.2f} Hz está **fuera del rango "
-                f"de datos cargados** ({f_min_d:.1f}–{f_max_d:.1f} Hz). Se toma el extremo más "
-                f"cercano disponible: **{f_borde:.1f} Hz** (la FRF se evalúa ahí, no en f_rd), por "
-                f"lo que los resultados de transitorio **no son válidos**. "
-                f"Sube un barrido SAP2000 que incluya la baja frecuencia (0 → ~50 Hz)."
-            )
+            win_lo, win_hi = min(f_tr_lo, f_tr_hi), max(f_tr_lo, f_tr_hi)
+            sin_solape = win_hi < f_min_d or win_lo > f_max_d
+            f_rd_fuera = not (f_min_d <= f_rd <= f_max_d)
+            if sin_solape:
+                f_borde = f_min_d if win_hi < f_min_d else f_max_d
+                st.warning(
+                    f"⚠️ La ventana del transitorio ({win_lo:.2f}–{win_hi:.2f} Hz) está **fuera "
+                    f"del rango de datos cargados** ({f_min_d:.1f}–{f_max_d:.1f} Hz). Se evalúa el "
+                    f"extremo más cercano disponible: **{f_borde:.1f} Hz**, por lo que los "
+                    f"resultados de transitorio **no son válidos**. Sube un barrido SAP2000 que "
+                    f"incluya esa banda (idealmente 0 → ~50 Hz)."
+                )
+            elif f_rd_fuera or win_lo < f_min_d:
+                st.warning(
+                    f"⚠️ Parte de la ventana del transitorio ({win_lo:.2f}–{win_hi:.2f} Hz) cae "
+                    f"**bajo el mínimo de datos cargados** ({f_min_d:.1f} Hz) — el cruce del "
+                    f"aislador f_rd = {f_rd:.2f} Hz {'no está' if f_rd_fuera else 'está'} dentro de "
+                    f"los datos. El peak transitorio se busca solo en el tramo con datos "
+                    f"({max(win_lo, f_min_d):.1f}–{min(win_hi, f_max_d):.1f} Hz). Para capturar el "
+                    f"cruce del aislador, sube un barrido que incluya la baja frecuencia."
+                )
 
         # Mostrar con colores
         col_crit = ['Richart_op','Blake_op','ISO_op','Richart_rd','ISO_rd']
@@ -813,7 +855,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -893,7 +935,7 @@ with tab_class:
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
             u_op = r['frf_op'] * F_op_cal / F_REF_N
-            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+            u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
             col_ = '#%02x%02x%02x' % tuple(
                 int(x*255) for x in color_joint(
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
@@ -1155,7 +1197,7 @@ with tab_report:
                     F_rd_cal = F_rd_V if r['dir'] == 'Z' else F_rd_H
                     u_op = r['frf_op'] * F_op_cal / F_REF_N
                     vr_op = v_rms(u_op, f_op)
-                    u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N)
+                    u_rd, f_rd_eff = transitorio_uf(r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi)
                     vr_rd = v_rms(u_rd, f_rd_eff)
                     cl_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
                         'A_op (mm)': round(u_op, 5), 'vRMS_op (mm/s)': round(vr_op, 3),
@@ -1247,7 +1289,10 @@ with tab_report:
                 add_h2("6.4 Criterios de Amplitud Admisible")
                 add_para("Las amplitudes reales se obtienen como A = FRF · F_real / F_ref, y la velocidad "
                          "eficaz v_RMS = (A·2πf)/√2 se clasifica según ISO 20816-3. La operación se evalúa "
-                         "a fop; el transitorio, en f_rd.")
+                         "en fop (con el peak estructural buscado dentro de la zona de exclusión); el "
+                         "transitorio se evalúa como el peor caso a lo largo de la ventana de barrido "
+                         f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) que el equipo "
+                         "recorre en partida/parada.")
                 add_df_table(df_cl_r)
 
                 # Figuras (matplotlib)
