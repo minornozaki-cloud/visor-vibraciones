@@ -63,6 +63,25 @@ ISO_ZONES = [
     (1e9,  "Zona D — Detener equipo",   "#f46d43"),
 ]
 
+# Curvas de los diagramas de clasificación (x en cpm, y en mm). Se usan tanto en
+# las gráficas interactivas (Plotly) como en las figuras del reporte (matplotlib).
+RICHART_LINES = {
+    "Peligro estructuras":    {"x": [100, 580, 4100, 10000], "y": [10.08, 1.8796, 0.2921, 0.1250], "col": "#67001f", "dash": "solid"},
+    "Precaución estructuras": {"x": [100, 640, 3500, 10000], "y": [9.113, 1.3462, 0.2311, 0.0785], "col": "#9e0142", "dash": "solid"},
+    "Límite máquinas":        {"x": [100, 4600, 10000], "y": [2.54, 0.05461, 0.02506], "col": "#d73027", "dash": "solid"},
+    "Severa (personas)":      {"x": [100, 540, 2600, 4200, 10000], "y": [14.46, 0.4572, 0.01829, 0.01067, 0.00400], "col": "#f46d43", "dash": "dash"},
+    "Molesta (personas)":     {"x": [100, 270, 2250, 3800, 10000], "y": [2.846, 0.5588, 0.01778, 0.00965, 0.00312], "col": "#fdae61", "dash": "dash"},
+    "Fácilmente perceptible": {"x": [100, 260, 5700, 10000], "y": [0.268, 0.10287, 0.00465, 0.00264], "col": "#fee08b", "dash": "dash"},
+    "Apenas perceptible":     {"x": [100, 185, 3900, 10000], "y": [0.0846, 0.04699, 0.00254, 0.00103], "col": "#66bd63", "dash": "dash"},
+    "No perceptible":         {"x": [100, 145, 1200, 10000], "y": [0.0336, 0.02286, 0.00254, 0.00028], "col": "#1a9850", "dash": "dash"},
+}
+BLAKE_LINES = {
+    "E — Peligroso":       {"x": [100, 310, 1850, 3700, 10000], "y": [0.5842, 1.016, 0.2286, 0.12192, 0.01524], "col": "#d73027", "dash": "solid"},
+    "D — Falla inminente": {"x": [100, 310, 1850, 3700, 10000], "y": [0.2286, 0.18288, 0.08636, 0.04191, 0.004826], "col": "#f46d43", "dash": "solid"},
+    "C — Defectuoso":      {"x": [100, 310, 1850, 3700, 10000], "y": [0.09398, 0.0635, 0.02921, 0.013208, 0.00381], "col": "#fee08b", "dash": "solid"},
+    "B — Fallas menores":  {"x": [100, 1850, 5900, 10000], "y": [0.0381, 0.009017, 0.00254, 0.001417], "col": "#66bd63", "dash": "solid"},
+}
+
 def classify(v, zones):
     for v_max, label, color in zones:
         if v <= v_max:
@@ -137,6 +156,55 @@ def transitorio_en_frd(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, n_apoyos=1):
     f_used = float(freqs[idx]); h = float(frf[idx])
     F = float(_fuerza_tr(modo_fuerza, np.array([f_used]), F_rd_cal, U_gmm, n_apoyos)[0])
     return h * F / F_REF, f_used, en_rango
+
+
+def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, ylim):
+    """Diagrama log-log de clasificación (Richart/Blake) en matplotlib, para el Word.
+    - lines: {label: {'x':[cpm], 'y':[mm], 'col':hex, 'dash':'solid'|'dash'}}
+    - puntos: lista de (f_cpm, A_mm, etiqueta, color_hex, marker)  ['o'=Op, '^'=Tr]
+    """
+    fig, ax = plt.subplots(figsize=(9, 6.2))
+    for lbl, d in lines.items():
+        ax.plot(d['x'], d['y'], color=d['col'], lw=1.6,
+                ls='--' if d.get('dash') == 'dash' else '-', label=lbl)
+    ax.axvspan(f_excl_lo*60, f_excl_hi*60, color='orange', alpha=0.15)
+    ax.axvline(f_op*60, color='red', ls='--', lw=1.3, alpha=0.8)
+    for f_cpm, A, lbl, col_, mk in puntos:
+        if A is None or not np.isfinite(A) or A <= 0:
+            continue
+        ax.plot(f_cpm, A, marker=mk, ms=9, color=col_,
+                markeredgecolor='black', markeredgewidth=1.0, ls='none', zorder=5)
+        ax.annotate(lbl, (f_cpm, A), fontsize=6, xytext=(4, 3), textcoords='offset points')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.set_xlim(100, 10000); ax.set_ylim(*ylim)
+    ax.set_xlabel('Frecuencia (cpm)', fontsize=9)
+    ax.set_ylabel('Amplitud peak (mm)', fontsize=9)
+    ax.set_title(titulo, fontsize=11, fontweight='bold')
+    ax.grid(True, which='both', alpha=0.25, ls='--')
+    ax.legend(fontsize=6.5, ncol=2, loc='lower left')
+    return fig
+
+
+def fig_iso_barras_mpl(df, iso_a, iso_b, iso_c, titulo):
+    """Barras de v_RMS (operación) por nodo con bandas ISO 20816-3, para el Word."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    labels = (df['Joint'].astype(str) + "\n(" + df['Caso'].astype(str) + ")").tolist()
+    vals = df['vRMS_op (mm/s)'].tolist()
+    top = max((max(vals) * 1.2 if vals else 0), iso_c * 1.3, 10.0)
+    for y0, y1, c in [(0, iso_a, '#1a9850'), (iso_a, iso_b, '#66bd63'),
+                      (iso_b, iso_c, '#fee08b'), (iso_c, top, '#f46d43')]:
+        ax.axhspan(y0, y1, color=c, alpha=0.12)
+    for y, c, n in [(iso_a, '#1a9850', f'A/B = {iso_a:.2f}'),
+                    (iso_b, '#b8860b', f'B/C = {iso_b:.2f}'),
+                    (iso_c, '#f46d43', f'C/D = {iso_c:.2f}')]:
+        ax.axhline(y, color=c, ls='--', lw=1.3)
+        ax.text(len(labels)-0.4, y, n, fontsize=7, color=c, va='bottom', ha='right')
+    ax.bar(range(len(labels)), vals, color='#1f77b4', alpha=0.85)
+    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, fontsize=7)
+    ax.set_ylim(0, top); ax.set_ylabel('v_RMS (mm/s)', fontsize=9)
+    ax.set_title(titulo, fontsize=11, fontweight='bold')
+    ax.grid(True, axis='y', alpha=0.25, ls='--')
+    return fig
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — PARÁMETROS
@@ -906,16 +974,7 @@ with tab_class:
         st.subheader("Richart Fig. 10-1 — Puntos de análisis en diagrama log-log")
         fig_rich = go.Figure()
 
-        richart_lines = {
-            "Peligro estructuras":    {"x": [100, 580, 4100, 10000], "y": [10.08, 1.8796, 0.2921, 0.1250], "col": "#67001f", "dash": "solid"},
-            "Precaución estructuras": {"x": [100, 640, 3500, 10000], "y": [9.113, 1.3462, 0.2311, 0.0785], "col": "#9e0142", "dash": "solid"},
-            "Límite máquinas":        {"x": [100, 4600, 10000], "y": [2.54, 0.05461, 0.02506], "col": "#d73027", "dash": "solid"},
-            "Severa (personas)":      {"x": [100, 540, 2600, 4200, 10000], "y": [14.46, 0.4572, 0.01829, 0.01067, 0.00400], "col": "#f46d43", "dash": "dash"},
-            "Molesta (personas)":     {"x": [100, 270, 2250, 3800, 10000], "y": [2.846, 0.5588, 0.01778, 0.00965, 0.00312], "col": "#fdae61", "dash": "dash"},
-            "Fácilmente perceptible": {"x": [100, 260, 5700, 10000], "y": [0.268, 0.10287, 0.00465, 0.00264], "col": "#fee08b", "dash": "dash"},
-            "Apenas perceptible":     {"x": [100, 185, 3900, 10000], "y": [0.0846, 0.04699, 0.00254, 0.00103], "col": "#66bd63", "dash": "dash"},
-            "No perceptible":         {"x": [100, 145, 1200, 10000], "y": [0.0336, 0.02286, 0.00254, 0.00028], "col": "#1a9850", "dash": "dash"}
-        }
+        richart_lines = RICHART_LINES
 
         for lbl, data in richart_lines.items():
             fig_rich.add_trace(go.Scatter(
@@ -990,12 +1049,7 @@ with tab_class:
         st.subheader("Blake Fig. 10-2 — Criterios de severidad vibratoria")
         fig_blake = go.Figure()
 
-        blake_lines = {
-            "E — Peligroso":       {"x": [100, 310, 1850, 3700, 10000], "y": [0.5842, 1.016, 0.2286, 0.12192, 0.01524], "col": "#d73027"},
-            "D — Falla inminente": {"x": [100, 310, 1850, 3700, 10000], "y": [0.2286, 0.18288, 0.08636, 0.04191, 0.004826], "col": "#f46d43"},
-            "C — Defectuoso":      {"x": [100, 310, 1850, 3700, 10000], "y": [0.09398, 0.0635, 0.02921, 0.013208, 0.00381], "col": "#fee08b"},
-            "B — Fallas menores":  {"x": [100, 1850, 5900, 10000], "y": [0.0381, 0.009017, 0.00254, 0.001417], "col": "#66bd63"}
-        }
+        blake_lines = BLAKE_LINES
 
         for lbl, data in blake_lines.items():
             fig_blake.add_trace(go.Scatter(
@@ -1410,6 +1464,47 @@ with tab_report:
                     p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run = p_img.add_run()
                     run.add_picture(buf, width=Cm(15))
+
+                    # --- Figuras de verificación de amplitudes (Richart / Blake / ISO) ---
+                    def add_fig_mpl(fig, titulo, caption=None):
+                        add_h2(titulo)
+                        if caption:
+                            add_para(caption)
+                        b = io.BytesIO()
+                        fig.savefig(b, format='png', dpi=160, bbox_inches='tight')
+                        b.seek(0); plt.close(fig)
+                        pi = doc.add_paragraph(); pi.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        pi.add_run().add_picture(b, width=Cm(15))
+
+                    # Puntos (Op / Tr) por nodo, coloreados como en la app
+                    joints_all = sorted(set(j for (_, j) in resultados.keys()))
+                    def _hex_joint(j):
+                        return '#%02x%02x%02x' % tuple(
+                            int(x*255) for x in color_joint(joints_all, j)[:3])
+                    puntos_cl = []
+                    for _, row in df_cl_r.iterrows():
+                        col_j = _hex_joint(row['Joint'])
+                        if modo_cond in ["Operación", "Ambas"]:
+                            puntos_cl.append((f_op*60, row['A_op (mm)'], str(row['Joint']), col_j, 'o'))
+                        if modo_cond in ["Transitorio", "Ambas"]:
+                            puntos_cl.append((row['f_rd (Hz)']*60, row['A_rd (mm)'], str(row['Joint']), col_j, '^'))
+
+                    cap_pts = ("Marcadores: ○ = operación (f_op), △ = transitorio (peor caso del "
+                               "tramo). Banda naranja = zona de exclusión; línea roja = f_op.")
+                    add_fig_mpl(
+                        fig_clasif_loglog_mpl(RICHART_LINES, puntos_cl, f_excl_lo, f_excl_hi,
+                                              f_op, "Richart Fig. 10-1 — Amplitud vs Frecuencia",
+                                              ylim=(10**-4.2, 10**1.2)),
+                        "Figura 6.2. Verificación de amplitudes — Richart", cap_pts)
+                    add_fig_mpl(
+                        fig_clasif_loglog_mpl(BLAKE_LINES, puntos_cl, f_excl_lo, f_excl_hi,
+                                              f_op, "Blake Fig. 10-2 — Amplitud vs Frecuencia",
+                                              ylim=(10**-4.5, 10**0.6)),
+                        "Figura 6.3. Verificación de amplitudes — Blake", cap_pts)
+                    add_fig_mpl(
+                        fig_iso_barras_mpl(df_cl_r, iso_a, iso_b, iso_c,
+                                           "ISO 20816-3 — v_RMS en operación por nodo"),
+                        "Figura 6.4. Verificación de amplitudes — ISO 20816-3")
 
                 # ════════ 7. MEDIDAS DE CONTROL ════════
                 add_h1("7. Medidas de Control")
