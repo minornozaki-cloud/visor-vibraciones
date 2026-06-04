@@ -144,18 +144,18 @@ def transitorio_uf(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, f_tr_lo=None, f_tr_hi
 
 def transitorio_en_frd(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, n_apoyos=1):
     """Respuesta evaluada EN EL PUNTO de cruce del aislador f_rd (no el peak del
-    tramo). Devuelve (amplitud_mm, f_usada[Hz], en_rango[bool]). Si f_rd cae fuera
-    de los datos, usa el punto más cercano y marca en_rango=False (valor no fiable).
+    tramo). Devuelve (amplitud_mm, f_usada[Hz], F_usada[N], en_rango[bool]). Si f_rd
+    cae fuera de los datos, usa el punto más cercano y marca en_rango=False.
     """
     freqs = np.array(r['freqs']); frf = np.array(r['frf_mm'])
     if freqs.size == 0:
-        return float('nan'), r['f_rd'], False
+        return float('nan'), r['f_rd'], float(F_rd_cal), False
     f_rd = r['f_rd']
     en_rango = bool(freqs.min() <= f_rd <= freqs.max())
     idx = int(np.argmin(np.abs(freqs - f_rd)))
     f_used = float(freqs[idx]); h = float(frf[idx])
     F = float(_fuerza_tr(modo_fuerza, np.array([f_used]), F_rd_cal, U_gmm, n_apoyos)[0])
-    return h * F / F_REF, f_used, en_rango
+    return h * F / F_REF, f_used, F, en_rango
 
 
 def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, ylim):
@@ -821,15 +821,19 @@ with tab_class:
             # ── ② Transitorio: peor caso del tramo (+ punto f_rd) ──
             u_rd, f_rd_eff, frf_rd_used, F_rd_used = transitorio_uf(
                 r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
-            u_frd, f_frd, frd_en_rango = transitorio_en_frd(
+            u_frd, f_frd, F_frd, frd_en_rango = transitorio_en_frd(
                 r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, n_apoyos)
             vp_rd = v_peak(u_rd, f_rd_eff); vr_rd = v_rms(u_rd, f_rd_eff)
             rows_tr.append({
                 'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
+                # Peor caso del tramo (la fuerza F_peor se evalúa en f_peor)
                 'f_peor (Hz)': round(f_rd_eff, 2),
                 'FRF_peor (mm/T)': round(frf_rd_used, 5),
                 'F_peor (N)': round(F_rd_used, 0),
                 'A_peor (mm)': round(u_rd, 4),
+                # Punto de cruce del aislador f_rd (la fuerza F@f_rd se evalúa en f_rd:
+                # en modo desbalance F∝f², por lo que aquí es mucho menor que F_peor)
+                'F@f_rd (N)': round(F_frd, 0),
                 'A@f_rd (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
@@ -907,6 +911,14 @@ with tab_class:
                      use_container_width=True, height=300, hide_index=True)
 
         st.subheader("② Condición transitorio (partida / parada)")
+        if modo_fuerza_tr.startswith("Curva"):
+            st.caption("ℹ️ En modo **curva de desbalance**, la fuerza varía con la frecuencia "
+                       "(F = m·e·ω² ∝ f²). Por eso `F_peor` (en f_peor) y `F@f_rd` (en el cruce del "
+                       "aislador) son **distintas**: la fuerza centrífuga es mínima a baja f y crece "
+                       "con f², así que el peor caso tiende a quedar cerca de operación, no en f_rd.")
+        else:
+            st.caption("ℹ️ En modo **valor fijo**, la fuerza F_rd es **constante** en todo el tramo "
+                       "(`F_peor` = `F@f_rd` = F_rd del fabricante).")
         st.dataframe(df_tr.style.map(color_class, subset=crit_cols),
                      use_container_width=True, height=300, hide_index=True)
 
@@ -958,6 +970,28 @@ with tab_class:
         alto_graf = st.slider("Alto de las gráficas de amplitudes (px)",
                               min_value=400, max_value=1600, value=850, step=50)
 
+        # Puntos (Op ○ / Tr △) para las descargas en alta calidad (matplotlib),
+        # idénticos a los del reporte; respetan el selector "Condición a graficar".
+        _joints_all = sorted(set(j for (_, j) in resultados.keys()))
+        def _hex_joint_app(j):
+            return '#%02x%02x%02x' % tuple(int(x*255) for x in color_joint(_joints_all, j)[:3])
+        puntos_cl_app = []
+        if modo_cond in ["Operación", "Ambas"]:
+            for rr in rows_op:
+                puntos_cl_app.append((f_op*60, rr['A_op (mm)'], str(rr['Joint']),
+                                      _hex_joint_app(rr['Joint']), 'o'))
+        if modo_cond in ["Transitorio", "Ambas"]:
+            for rr in rows_tr:
+                puntos_cl_app.append((rr['f_peor (Hz)']*60, rr['A_peor (mm)'], str(rr['Joint']),
+                                      _hex_joint_app(rr['Joint']), '^'))
+
+        def descarga_png_mpl(fig, nombre, etiqueta):
+            """Exporta una figura matplotlib (misma calidad que el reporte) como PNG."""
+            b = io.BytesIO()
+            fig.savefig(b, format='png', dpi=200, bbox_inches='tight')
+            b.seek(0); plt.close(fig)
+            st.download_button(etiqueta, b, file_name=nombre, mime="image/png", key=nombre)
+
         # Gráfico de barras v_RMS para ISO
         st.subheader("ISO 20816-3 — v_RMS por nodo y dirección")
 
@@ -1004,6 +1038,9 @@ with tab_class:
         fig_iso.add_hrect(y0=iso_b, y1=iso_c, fillcolor="#fee08b", opacity=0.08, line_width=0)
         fig_iso.add_hrect(y0=iso_c, y1=iso_top_y, fillcolor="#f46d43", opacity=0.08, line_width=0)
         st.plotly_chart(fig_iso, use_container_width=True)
+        descarga_png_mpl(fig_iso_barras_mpl(df_op, iso_a, iso_b, iso_c,
+                                            "ISO 20816-3 — v_RMS en operación por nodo"),
+                         "ISO_20816.png", "⬇️ Descargar ISO (PNG alta calidad)")
 
         # ══════════════════════════════════════════════════════════════════════
         # FORMATO EXACTO DE EJES LOGARÍTMICOS Y ESTILOS
@@ -1089,7 +1126,11 @@ with tab_class:
             **grid_style, minor=minor_grid_style
         )
         
-        st.plotly_chart(fig_rich, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': 'Grafico_Richart', 'scale': 2}})
+        st.plotly_chart(fig_rich, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': 'Grafico_Richart', 'scale': 3}})
+        descarga_png_mpl(fig_clasif_loglog_mpl(RICHART_LINES, puntos_cl_app, f_excl_lo, f_excl_hi,
+                                               f_op, "Richart Fig. 10-1 — Amplitud vs Frecuencia",
+                                               (10**-4.2, 10**1.2)),
+                         "Richart.png", "⬇️ Descargar Richart (PNG alta calidad)")
 
         # ----------------------------------------------------------------------
         # Gráfico Blake Fig 10-2
@@ -1164,7 +1205,11 @@ with tab_class:
             **grid_style, minor=minor_grid_style
         )
         
-        st.plotly_chart(fig_blake, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': 'Grafico_Blake', 'scale': 2}})
+        st.plotly_chart(fig_blake, use_container_width=True, config={'toImageButtonOptions': {'format': 'png', 'filename': 'Grafico_Blake', 'scale': 3}})
+        descarga_png_mpl(fig_clasif_loglog_mpl(BLAKE_LINES, puntos_cl_app, f_excl_lo, f_excl_hi,
+                                               f_op, "Blake Fig. 10-2 — Amplitud vs Frecuencia",
+                                               (10**-4.5, 10**0.6)),
+                         "Blake.png", "⬇️ Descargar Blake (PNG alta calidad)")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5: DISTORSIÓN ANGULAR
@@ -1470,6 +1515,17 @@ with tab_report:
                          "transitorio se evalúa como el peor caso a lo largo de la ventana de barrido "
                          f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) que el equipo "
                          "recorre en partida/parada.")
+                if modo_fuerza_tr.startswith("Curva"):
+                    add_para("Nota — modelo de fuerza transitoria por desbalance: la fuerza varía con la "
+                             "frecuencia según F(f) = m·e·ω² ∝ f² (desbalance rotativo, válido para "
+                             "equipos centrífugos). En consecuencia, la fuerza no es constante en el "
+                             "barrido: es mínima en el cruce del aislador (f_rd, baja frecuencia) y "
+                             "máxima cerca de operación. El peor caso del transitorio tiende, por tanto, "
+                             "a ubicarse en la zona alta del barrido y no en f_rd.")
+                else:
+                    add_para("Nota — modelo de fuerza transitoria de valor fijo: se aplica la fuerza "
+                             "dinámica máxima del fabricante (F_rd) como valor constante a lo largo de "
+                             "todo el barrido (criterio conservador para el cruce de resonancia).")
                 add_df_table(df_cl_r)
 
                 # Figuras (matplotlib)
