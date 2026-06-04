@@ -217,9 +217,9 @@ with st.sidebar:
     f_op_rpm = st.number_input("Frecuencia de operación (RPM)", value=2900.0, step=10.0, format="%.0f")
     f_op = f_op_rpm / 60.0
     st.caption(f"= {f_op:.2f} Hz (máxima del equipo)")
-    W_pata = st.number_input("Peso del equipo por pata (N)", value=0.0, step=100.0, format="%.0f",
-                             help="Peso estático por apoyo. Necesario para calcular f_rd del aislador. "
-                                  "Si lo dejas en 0, deberás ingresar f_rd manualmente.")
+    W_pata = st.number_input("Peso del equipo por pata (kgf)", value=0.0, step=100.0, format="%.0f",
+                             help="Peso estático por apoyo, en kgf (= masa en kg). Necesario para "
+                                  "calcular f_rd del aislador. Si lo dejas en 0, ingresa f_rd manual.")
 
     st.divider()
     st.markdown("**Cargas del fabricante (N/pata = total ÷ 4)**")
@@ -239,9 +239,9 @@ with st.sidebar:
     st.divider()
     st.markdown("**Transitorio (partida / parada)**")
     # Frecuencia del modo de cuerpo rígido del equipo sobre el aislador:
-    #   f_rd = (1/2π)·√(k/m)  con  k = K_din[N/m]  y  m = W_pata/g
+    #   f_rd = (1/2π)·√(k/m)  con  k = K_din[N/m]  y  m = W_pata[kgf] = masa[kg]
     if W_pata > 0:
-        f_rd_calc = (1.0/(2*math.pi)) * math.sqrt(K_din*1000.0*9.81 / W_pata)
+        f_rd_calc = (1.0/(2*math.pi)) * math.sqrt(K_din*1000.0 / W_pata)
         st.caption(f"f_rd calculada (aislador): **{f_rd_calc:.2f} Hz**")
     else:
         f_rd_calc = None
@@ -258,8 +258,9 @@ with st.sidebar:
                                   ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"])
     if modo_fuerza_tr.startswith("Curva"):
         U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
-                                help="Desbalance TOTAL del rotor. F(f)=m·e·ω². Estímalo con ISO 1940-1: "
-                                     "U = m[kg]·1000·G[mm/s]/ω, con G el grado de balanceo (G2.5, G6.3…).")
+                                help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso total "
+                                     "del equipo), e = excentricidad. F(f)=m·e·ω². Estímalo con ISO 1940-1: "
+                                     "U = m_rotor[kg]·1000·G[mm/s]/ω, con G el grado de balanceo (G2.5, G6.3…).")
         n_apoyos = st.number_input("N° de apoyos (reparto por pata)", value=4, min_value=1, step=1,
                                    help="La FRF de SAP está normalizada por apoyo (1 ton/pata), así que "
                                         "la fuerza de desbalance total se divide entre los apoyos.")
