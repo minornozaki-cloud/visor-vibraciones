@@ -894,15 +894,15 @@ with tab_class:
             vp_rd = v_peak(u_rd, f_rd_eff); vr_rd = v_rms(u_rd, f_rd_eff)
             rows_tr.append({
                 'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
-                # Peor caso del tramo (la fuerza F_peor se evalúa en f_peor)
+                # Peor caso del tramo (la fuerza F(f_peor) se evalúa en f_peor)
                 'f_peor (Hz)': round(f_rd_eff, 2),
                 'FRF_peor (mm/T)': round(frf_rd_used, 5),
-                'F_peor (N)': round(F_rd_used, 0),
+                'F(f_peor) (N)': round(F_rd_used, 0),
                 'A_peor (mm)': round(u_rd, 4),
-                # Punto de cruce del aislador f_rd (la fuerza F@f_rd se evalúa en f_rd:
-                # en modo desbalance F∝f², por lo que aquí es mucho menor que F_peor)
-                'F@f_rd (N)': round(F_frd, 0),
-                'A@f_rd (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
+                # Punto de cruce del aislador f_rd (la fuerza F(f_rd) se evalúa en f_rd:
+                # en modo desbalance F∝f², por lo que aquí es mucho menor que F(f_peor))
+                'F(f_rd) (N)': round(F_frd, 0),
+                'A(f_rd) (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
                 'Richart': classify(vp_rd, RICHART_ZONES)[0],
@@ -987,12 +987,12 @@ with tab_class:
         st.subheader("② Condición transitorio (partida / parada)")
         if modo_fuerza_tr.startswith("Curva"):
             st.caption("ℹ️ En modo **curva de desbalance**, la fuerza varía con la frecuencia "
-                       "(F = m·e·ω² ∝ f²). Por eso `F_peor` (en f_peor) y `F@f_rd` (en el cruce del "
+                       "(F = m·e·ω² ∝ f²). Por eso `F(f_peor)` (en f_peor) y `F(f_rd)` (en el cruce del "
                        "aislador) son **distintas**: la fuerza centrífuga es mínima a baja f y crece "
                        "con f², así que el peor caso tiende a quedar cerca de operación, no en f_rd.")
         else:
             st.caption("ℹ️ En modo **valor fijo**, la fuerza F_rd es **constante** en todo el tramo "
-                       "(`F_peor` = `F@f_rd` = F_rd del fabricante).")
+                       "(`F(f_peor)` = `F(f_rd)` = F_rd del fabricante).")
         st.dataframe(df_tr.style.map(color_class, subset=crit_cols),
                      use_container_width=True, height=300, hide_index=True)
 
@@ -1026,9 +1026,9 @@ with tab_class:
                 "1. **Peor caso del tramo** (`_peor`): se recorre la **ventana de barrido** "
                 f"({min(f_tr_lo, f_tr_hi):.2f}–{max(f_tr_lo, f_tr_hi):.2f} Hz) y se toma el máximo "
                 "de $A(f)=\\mathrm{FRF}(f)\\cdot F(f)/F_{ref}$. `f_peor` es la frecuencia donde "
-                "ocurre, y `FRF_peor`/`F_peor` los valores usados ahí. **Esta es la que clasifica** "
+                "ocurre, y `FRF_peor`/`F(f_peor)` los valores usados ahí. **Esta es la que clasifica** "
                 "(Richart/ISO `_rd`) por ser conservadora.\n"
-                "2. **Valor puntual en el cruce del aislador** (`A@f_rd`): la respuesta evaluada "
+                "2. **Valor puntual en el cruce del aislador** (`A(f_rd)`): la respuesta evaluada "
                 f"exactamente en f_rd = {f_rd:.2f} Hz. Es **NaN** si f_rd cae fuera de los datos "
                 "cargados (no hay FRF en esa frecuencia).\n\n"
                 "Según el **modelo de fuerza transitoria** del sidebar:\n\n"
