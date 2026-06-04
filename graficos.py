@@ -257,19 +257,34 @@ with st.sidebar:
     modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
                                   ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"])
     if modo_fuerza_tr.startswith("Curva"):
-        U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
-                                help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso total "
-                                     "del equipo), e = excentricidad. F(f)=m·e·ω². Estímalo con ISO 1940-1: "
-                                     "U = m_rotor[kg]·1000·G[mm/s]/ω, con G el grado de balanceo (G2.5, G6.3…).")
+        st.info("Modelo de **desbalance rotativo** (F = m·e·ω²): aplica a equipos "
+                "**centrífugos / rotativos** (bombas, ventiladores, sopladores, compresores, "
+                "motores). No representa máquinas recíprocas ni de impacto.", icon="ℹ️")
+        metodo_U = st.radio("Definir desbalance por", ["Valor U directo", "Grado ISO 1940 (G)"],
+                            horizontal=True)
+        if metodo_U.startswith("Grado"):
+            m_rotor = st.number_input("Masa del rotor (kg)", value=0.0, step=10.0, format="%.1f",
+                                      help="Masa de la parte ROTANTE (no el peso total del equipo).")
+            G_grade = st.selectbox("Grado de balanceo G — ISO 1940-1 (mm/s)",
+                                   [0.4, 1.0, 2.5, 6.3, 16.0, 40.0], index=3,
+                                   help="G2.5: turbinas/compresores. G6.3: bombas y ventiladores "
+                                        "(típico). G16: motores diésel/ejes de transmisión.")
+            omega = 2*math.pi*f_op
+            U_gmm = (m_rotor * 1000.0 * G_grade / omega) if omega > 0 else 0.0
+            st.caption(f"U = m·1000·G/ω = **{U_gmm:,.1f} g·mm** (G{G_grade}, f_op = {f_op:.1f} Hz)")
+        else:
+            U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
+                                    help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso "
+                                         "total del equipo), e = excentricidad. F(f)=m·e·ω².")
         n_apoyos = st.number_input("N° de apoyos (reparto por pata)", value=4, min_value=1, step=1,
                                    help="La FRF de SAP está normalizada por apoyo (1 ton/pata), así que "
                                         "la fuerza de desbalance total se divide entre los apoyos.")
         if U_gmm > 0:
             F_op_total = (U_gmm/1e6)*(2*math.pi*f_op)**2
             st.caption(f"A f_op: F_total = {F_op_total:.0f} N → {F_op_total/n_apoyos:.0f} N por apoyo")
-        st.caption("F(f)=m·e·ω² (desbalance rotativo). Ref.: Arya, O'Neill & Pincus (1979); "
-                   "Den Hartog, *Mechanical Vibrations*. **Definición referencial** — "
-                   "reemplazar por la curva fuerza–frecuencia del fabricante cuando esté disponible.")
+        st.caption("Ref.: ISO 1940-1; Arya, O'Neill & Pincus (1979); Den Hartog, *Mechanical "
+                   "Vibrations*. **Definición referencial** — reemplazar por la curva "
+                   "fuerza–frecuencia del fabricante cuando esté disponible.")
     else:
         U_gmm = 0.0
         n_apoyos = 1
