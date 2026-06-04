@@ -910,15 +910,21 @@ with tab_class:
                 'ISO':     classify(vr_rd, ISO_ZONES)[0],
             })
 
-            # ── ③ Peak en zona de exclusión: FRF_pk × F_op, evaluado a f_pk ──
-            u_pk  = r['frf_pk'] * F_op_cal / F_REF_N
+            # ── ③ Peak en zona de exclusión: FRF_pk × F(f_peak), evaluado a f_pk ──
+            # La fuerza se evalúa EN f_peak con el mismo modelo: para realizar la
+            # amplificación H(f_peak) la máquina debe excitar a f_peak (girar a esa
+            # frecuencia), por lo que la fuerza es F(f_peak), no F_op. En modo desbalance
+            # F∝f² (distinta a F_op); en modo valor fijo es constante (= F_op_cal).
+            F_pk  = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
+                                     F_op_cal, U_gmm, n_apoyos)[0])
+            u_pk  = r['frf_pk'] * F_pk / F_REF_N
             vp_pk = v_peak(u_pk, r['f_pk']); vr_pk = v_rms(u_pk, r['f_pk'])
             rows_pk.append({
                 'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
                 'f_peak (Hz)': round(r['f_pk'], 2),
                 'FRF_peak (mm/T)': round(r['frf_pk'], 5),
                 'Fase_peak (°)': round(r['fase_pk'], 1),
-                'F_op (N)': round(F_op_cal, 0),
+                'F@f_peak (N)': round(F_pk, 0),
                 'A_peak (mm)': round(u_pk, 5),
                 'v_peak (mm/s)': round(vp_pk, 3),
                 'vRMS_peak (mm/s)': round(vr_pk, 3),
@@ -991,10 +997,20 @@ with tab_class:
                      use_container_width=True, height=300, hide_index=True)
 
         st.subheader("③ Condición peaks en zona de exclusión")
-        st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
-                   f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza de operación F_op. "
-                   "Evalúa la severidad si una resonancia estructural cae cerca de la operación "
-                   "(ver columnas Fase / En zona / Diagnóstico).")
+        if modo_fuerza_tr.startswith("Curva"):
+            st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
+                       f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza **evaluada en "
+                       f"f_peak** (`F@f_peak = m·e·(2π·f_peak)²/n_apoyos`). Para realizar esa "
+                       "amplificación la máquina debe excitar a f_peak (girar a esa frecuencia), por "
+                       "lo que la fuerza es F(f_peak) — no F_op. Evalúa la severidad si una "
+                       "resonancia estructural cae cerca de la operación (ver columnas Fase / En "
+                       "zona / Diagnóstico).")
+        else:
+            st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
+                       f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza **evaluada en "
+                       "f_peak**. En modo **valor fijo** la fuerza es constante, por lo que "
+                       "`F@f_peak` = F_op. Evalúa la severidad si una resonancia estructural cae "
+                       "cerca de la operación (ver columnas Fase / En zona / Diagnóstico).")
         st.dataframe(df_pk.style.map(color_class, subset=crit_cols),
                      use_container_width=True, height=300, hide_index=True)
 
@@ -1024,9 +1040,13 @@ with tab_class:
                 "pondera FRF y fuerza y suele desplazarse hacia arriba.\n\n"
                 "**③ Peaks en zona de exclusión** (`_peak`): toma el peak estructural de |H| dentro "
                 "de la zona de exclusión [0.8·fop, 1.2·fop] (columna `FRF_peak` a la frecuencia "
-                "`f_peak`) y lo excita con la **fuerza de operación** F_op. Responde *qué tan severa "
-                "sería la vibración si una resonancia estructural cae cerca de la operación*. Las "
-                "columnas `Fase_peak`, `En zona` y `Diagnóstico` indican si es una resonancia real "
+                "`f_peak`) y lo excita con la **fuerza evaluada en f_peak** (`F@f_peak`). La FRF en "
+                "f_peak solo se materializa si la máquina excita a esa frecuencia (gira a f_peak), "
+                "por lo que la fuerza coherente es $F(f_{peak})$ — **no** $F_{op}$: en modo "
+                "**curva** $F@f_{peak}=m e\\,(2\\pi f_{peak})^2/N_{apoyos}$ (∝f², distinta de F_op); "
+                "en modo **valor fijo** es constante (= F_op). Responde *qué tan severa sería la "
+                "vibración si una resonancia estructural cae cerca de la operación*. Las columnas "
+                "`Fase_peak`, `En zona` y `Diagnóstico` indican si es una resonancia real "
                 "(fase ≈ 90°, peak dentro de la zona).\n\n"
                 "**Cobertura de datos:** si la ventana del transitorio solo solapa parcialmente con "
                 "el barrido SAP, el peor caso se busca **dentro del tramo con datos** — no en el "
