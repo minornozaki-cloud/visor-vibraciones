@@ -924,7 +924,7 @@ with tab_class:
                 'f_peak (Hz)': round(r['f_pk'], 2),
                 'FRF_peak (mm/T)': round(r['frf_pk'], 5),
                 'Fase_peak (°)': round(r['fase_pk'], 1),
-                'F@f_peak (N)': round(F_pk, 0),
+                'F(f_peak) (N)': round(F_pk, 0),
                 'A_peak (mm)': round(u_pk, 5),
                 'v_peak (mm/s)': round(vp_pk, 3),
                 'vRMS_peak (mm/s)': round(vr_pk, 3),
@@ -1000,7 +1000,7 @@ with tab_class:
         if modo_fuerza_tr.startswith("Curva"):
             st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
                        f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza **evaluada en "
-                       f"f_peak** (`F@f_peak = m·e·(2π·f_peak)²/n_apoyos`). Para realizar esa "
+                       f"f_peak** (`F(f_peak) = m·e·(2π·f_peak)²/n_apoyos`). Para realizar esa "
                        "amplificación la máquina debe excitar a f_peak (girar a esa frecuencia), por "
                        "lo que la fuerza es F(f_peak) — no F_op. Evalúa la severidad si una "
                        "resonancia estructural cae cerca de la operación (ver columnas Fase / En "
@@ -1008,8 +1008,8 @@ with tab_class:
         else:
             st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
                        f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza **evaluada en "
-                       "f_peak**. En modo **valor fijo** la fuerza es constante, por lo que "
-                       "`F@f_peak` = F_op. Evalúa la severidad si una resonancia estructural cae "
+                       "f_peak**. En modo **valor fijo** la función F(f) es constante, por lo que "
+                       "`F(f_peak)` = F_op. Evalúa la severidad si una resonancia estructural cae "
                        "cerca de la operación (ver columnas Fase / En zona / Diagnóstico).")
         st.dataframe(df_pk.style.map(color_class, subset=crit_cols),
                      use_container_width=True, height=300, hide_index=True)
@@ -1040,7 +1040,7 @@ with tab_class:
                 "pondera FRF y fuerza y suele desplazarse hacia arriba.\n\n"
                 "**③ Peaks en zona de exclusión** (`_peak`): toma el peak estructural de |H| dentro "
                 "de la zona de exclusión [0.8·fop, 1.2·fop] (columna `FRF_peak` a la frecuencia "
-                "`f_peak`) y lo excita con la **fuerza evaluada en f_peak** (`F@f_peak`). La FRF en "
+                "`f_peak`) y lo excita con la **fuerza evaluada en f_peak** (`F(f_peak)`). La FRF en "
                 "f_peak solo se materializa si la máquina excita a esa frecuencia (gira a f_peak), "
                 "por lo que la fuerza coherente es $F(f_{peak})$ — **no** $F_{op}$: en modo "
                 "**curva** $F@f_{peak}=m e\\,(2\\pi f_{peak})^2/N_{apoyos}$ (∝f², distinta de F_op); "
