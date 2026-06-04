@@ -272,13 +272,16 @@ with st.sidebar:
                                        "transitoria (partida/parada), como en los casos revisados "
                                        "en este proyecto. Se aplica la misma F_rd en toda la "
                                        "ventana del barrido.\n\n"
-                                       "**Curva desbalance (m·e·ω²)**: la fuerza varía con f² "
-                                       "(F = m·e·ω²); mínima en f_rd y máxima cerca de operación. "
-                                       "Sólo aplica a equipos centrífugos / rotativos.")
+                                       "**Curva desbalance**: F(f) = m·e·ω², con ω = 2·π·f, así que "
+                                       "la fuerza varía con f²; mínima en f_rd y máxima cerca de "
+                                       "operación. Sólo aplica a equipos centrífugos / rotativos.")
     if modo_fuerza_tr.startswith("Curva"):
-        st.info("Modelo de **desbalance rotativo** (F = m·e·ω²): aplica a equipos "
-                "**centrífugos / rotativos** (bombas, ventiladores, sopladores, compresores, "
-                "motores). No representa máquinas recíprocas ni de impacto.", icon="ℹ️")
+        st.info("**Modelo de desbalance rotativo:**\n\n"
+                "**F(f) = m·e·ω²**,  con  **ω = 2·π·f**\n\n"
+                "→ F(f) = m·e·(2π·f)²,  donde m·e = U (desbalance) y f la frecuencia de giro. "
+                "La fuerza crece con f²: mínima a baja frecuencia, máxima cerca de operación. "
+                "Aplica a equipos **centrífugos / rotativos** (bombas, ventiladores, sopladores, "
+                "compresores, motores); no representa máquinas recíprocas ni de impacto.", icon="ℹ️")
         metodo_U = st.radio("Definir desbalance por", ["Valor U directo", "Grado ISO 1940 (G)"],
                             horizontal=True)
         if metodo_U.startswith("Grado"):
@@ -294,7 +297,8 @@ with st.sidebar:
         else:
             U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
                                     help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso "
-                                         "total del equipo), e = excentricidad. F(f)=m·e·ω².")
+                                         "total del equipo), e = excentricidad. F(f) = m·e·ω², con "
+                                         "ω = 2·π·f.")
         n_apoyos = st.number_input("N° de apoyos (reparto por pata)", value=4, min_value=1, step=1,
                                    help="La FRF de SAP está normalizada por apoyo (1 ton/pata), así que "
                                         "la fuerza de desbalance total se divide entre los apoyos.")
@@ -388,9 +392,10 @@ with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
         "#### Fuerzas y aislador\n"
         "| Variable | Significado |\n"
         "|---|---|\n"
+        "| **F(f)** | Función fuerza–frecuencia. *Valor fijo*: F(f) = F_rd constante. *Curva desbalance*: F(f) = m·e·ω², con ω = 2·π·f. |\n"
         "| **F_rd** | Fuerza dinámica en la condición transitoria. En *Valor fijo* es **constante** (valor práctico); en *Curva desbalance* varía con f². |\n"
         "| **F_op** | Fuerza dinámica en operación (a f_op). |\n"
-        "| **U = m·e** | Desbalance del **rotor** (g·mm): m = masa rotante, e = excentricidad. Genera F(f)=m·e·ω². |\n"
+        "| **U = m·e** | Desbalance del **rotor** (g·mm): m = masa rotante, e = excentricidad. Genera F(f) = m·e·ω², con ω = 2·π·f. |\n"
         "| **G (ISO 1940-1)** | Grado de calidad de balanceo (mm/s). Define U = m·1000·G/ω. |\n"
         "| **F_ref** | Fuerza de referencia con que se normalizó la FRF (SAP: 1 Ton = 9810 N). |\n"
         "| **K_din** | Rigidez **dinámica** del aislador (N/mm). |\n"
