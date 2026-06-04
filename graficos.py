@@ -246,16 +246,35 @@ with st.sidebar:
     else:
         f_rd_calc = None
         st.caption("Ingresa el peso por pata para calcular f_rd automáticamente.")
+    _help_frd = ("f_rd es la frecuencia del **modo de cuerpo rígido** del equipo sobre el "
+                 "aislador:\n\n**f_rd = (1/2π)·√(K_din / m)**\n\n"
+                 "con K_din = rigidez dinámica del aislador y m = masa por apoyo. "
+                 "Corresponde a la frecuencia que el equipo **atraviesa al partir o detenerse** "
+                 "(condición transitoria de partida/parada): al subir o bajar de RPM, la "
+                 "máquina cruza esta resonancia.\n\n"
+                 "• **Calculada**: se obtiene de la expresión con el peso por pata.\n"
+                 "• **Manual**: debe ser **otorgada por el fabricante** del aislador.")
     origen_frd = st.radio("Origen de f_rd", ["Calculada", "Manual"],
-                          index=1 if f_rd_calc is None else 0, horizontal=True)
+                          index=1 if f_rd_calc is None else 0, horizontal=True,
+                          help=_help_frd)
     if origen_frd == "Calculada" and f_rd_calc is not None:
         f_rd = f_rd_calc
     else:
-        f_rd = st.number_input("f_rd manual (Hz)", value=3.5, step=0.1, format="%.2f")
+        f_rd = st.number_input("f_rd manual (Hz)", value=3.5, step=0.1, format="%.2f",
+                               help="Valor de f_rd (frecuencia de partida/parada) **otorgado "
+                                    "por el fabricante** del aislador, en Hz.")
     st.caption(f"f_rd en uso: **{f_rd:.2f} Hz**")
 
     modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
-                                  ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"])
+                                  ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"],
+                                  help="**Valor fijo (F_rd)**: fuerza dinámica **constante** que "
+                                       "se considera para efectos prácticos en la condición "
+                                       "transitoria (partida/parada), como en los casos revisados "
+                                       "en este proyecto. Se aplica la misma F_rd en toda la "
+                                       "ventana del barrido.\n\n"
+                                       "**Curva desbalance (m·e·ω²)**: la fuerza varía con f² "
+                                       "(F = m·e·ω²); mínima en f_rd y máxima cerca de operación. "
+                                       "Sólo aplica a equipos centrífugos / rotativos.")
     if modo_fuerza_tr.startswith("Curva"):
         st.info("Modelo de **desbalance rotativo** (F = m·e·ω²): aplica a equipos "
                 "**centrífugos / rotativos** (bombas, ventiladores, sopladores, compresores, "
@@ -343,6 +362,49 @@ st.markdown(
     f"**Zona de exclusión ACI 351.3R:** {f_excl_lo:.2f} – {f_excl_hi:.2f} Hz | "
     f"**K_din aislador:** {K_din:.0f} N/mm"
 )
+
+with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
+    st.markdown(
+        "#### Frecuencias\n"
+        "| Variable | Significado |\n"
+        "|---|---|\n"
+        "| **f_op** | Frecuencia de **operación** del equipo (= RPM/60). Es la frecuencia de giro nominal. |\n"
+        "| **f_op (RPM)** | Velocidad de giro nominal en revoluciones por minuto. |\n"
+        "| **f_rd** | Frecuencia del **modo de cuerpo rígido** del equipo sobre el aislador: f_rd = (1/2π)·√(K_din/m). Es la frecuencia que el equipo **atraviesa al partir o detenerse** (condición transitoria). En modo *Manual* la otorga el fabricante del aislador. |\n"
+        "| **Zona de exclusión** | Banda [0.8·f_op, 1.2·f_op] (ACI 351.3R) donde **no** debe haber frecuencias naturales, para evitar resonancia en operación. |\n"
+        "| **f_peor** | Frecuencia dentro de la ventana del transitorio donde el producto FRF·F es máximo (peor caso de partida/parada). |\n"
+        "\n"
+        "#### Respuesta dinámica\n"
+        "| Variable | Significado |\n"
+        "|---|---|\n"
+        "| **FRF** | *Frequency Response Function*: desplazamiento por unidad de fuerza (mm/Ton), obtenida del Steady-State de SAP2000. |\n"
+        "| **FRF_op** | Valor de la FRF evaluado en **f_op** (operación). |\n"
+        "| **FRF_peak** | Valor de la FRF en el **peak** dentro de la zona de exclusión. |\n"
+        "| **φ (fase)** | Ángulo de fase de la respuesta. |φ|≈90° indica condición de **resonancia**. |\n"
+        "| **A** | **Amplitud** de desplazamiento peak: A = FRF · F / F_ref (mm). |\n"
+        "| **v_peak** | Velocidad peak: v = 2π·f·A (mm/s). |\n"
+        "| **v_RMS** | Velocidad RMS = v_peak/√2. Es la que clasifica ISO 20816-3. |\n"
+        "\n"
+        "#### Fuerzas y aislador\n"
+        "| Variable | Significado |\n"
+        "|---|---|\n"
+        "| **F_rd** | Fuerza dinámica en la condición transitoria. En *Valor fijo* es **constante** (valor práctico); en *Curva desbalance* varía con f². |\n"
+        "| **F_op** | Fuerza dinámica en operación (a f_op). |\n"
+        "| **U = m·e** | Desbalance del **rotor** (g·mm): m = masa rotante, e = excentricidad. Genera F(f)=m·e·ω². |\n"
+        "| **G (ISO 1940-1)** | Grado de calidad de balanceo (mm/s). Define U = m·1000·G/ω. |\n"
+        "| **F_ref** | Fuerza de referencia con que se normalizó la FRF (SAP: 1 Ton = 9810 N). |\n"
+        "| **K_din** | Rigidez **dinámica** del aislador (N/mm). |\n"
+        "| **K_est** | Rigidez **estática** del sistema en operación: K_est = F_ref / FRF_op. |\n"
+        "| **RF = K_est/K_din** | Razón de rigidez (Hutchinson). Debe ser ≥ 10 para aislamiento efectivo. |\n"
+        "| **W_pata** | Peso estático por apoyo (kgf = masa en kg). |\n"
+        "| **N° de apoyos** | Número de patas; reparte la fuerza total de desbalance por apoyo. |\n"
+        "\n"
+        "#### Clasificación de amplitudes\n"
+        "- **Richart (Fig. 10-1)** y **Blake (Fig. 10-2)**: cartas amplitud–frecuencia para clasificar severidad.\n"
+        "- **ISO 20816-3**: límites de v_RMS por zonas A (aceptable) / B (normal) / C (alarma) / D (detener).\n"
+        "- **Condiciones evaluadas:** ① **Operación** (en f_op) · ② **Transitorio** (partida/parada) · ③ **Peak en zona de exclusión**."
+    )
+
 st.divider()
 
 # Reconstruir zonas ISO con los límites configurables del sidebar
@@ -586,7 +648,13 @@ with tab_frf:
         casos_uniq = sorted(set(r['caso'] for r in resultados.values()))
         joints_uniq = sorted(set(r['joint'] for r in resultados.values()))
 
-        n_cols = st.slider("Columnas por fila", 1, 3, min(len(casos_uniq), 3))
+        cfg1, cfg2 = st.columns(2)
+        with cfg1:
+            n_cols = st.slider("Columnas por fila", 1, 3, min(len(casos_uniq), 3))
+        with cfg2:
+            alto_fila_frf = st.slider("Alto por fila (px)", 250, 800, 380, 10,
+                                      help="Controla la altura vertical de cada fila de "
+                                           "subgráficos FRF — Amplitud.")
         fig_frf = make_subplots(
             rows=math.ceil(len(casos_uniq)/n_cols), cols=n_cols,
             subplot_titles=casos_uniq, shared_yaxes=False
@@ -626,7 +694,7 @@ with tab_frf:
             )
 
         fig_frf.update_layout(
-            height=380*math.ceil(len(casos_uniq)/n_cols),
+            height=alto_fila_frf*math.ceil(len(casos_uniq)/n_cols),
             title_text="FRF |U| — Desplazamiento por unidad de fuerza (mm/Ton)",
             legend=dict(orientation="h", yanchor="bottom", y=-0.15),
             font=dict(family="Arial"),
