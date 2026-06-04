@@ -266,7 +266,7 @@ with st.sidebar:
     st.caption(f"f_rd en uso: **{f_rd:.2f} Hz**")
 
     modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
-                                  ["Valor fijo (F_rd)", "Curva desbalance m·e·ω²"],
+                                  ["Valor fijo: F(f) = F_rd", "Curva desbalance: F(f) = m·e·ω²"],
                                   help="**Valor fijo (F_rd)**: fuerza dinámica **constante** que "
                                        "se considera para efectos prácticos en la condición "
                                        "transitoria (partida/parada), como en los casos revisados "
