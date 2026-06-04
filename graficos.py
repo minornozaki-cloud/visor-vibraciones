@@ -795,60 +795,71 @@ with tab_class:
         with col_c: F_rd_V_c  = st.number_input("F rd V (N)", value=F_rd_V,  key="frdv_c")
         with col_d: F_rd_H_c  = st.number_input("F rd H (N)", value=F_rd_H,  key="frdh_c")
 
-        # Construir tabla de resultados de clasificación
-        rows_class = []
+        # Tres condiciones → una tabla cada una (cada una con Richart + Blake + ISO)
+        rows_op, rows_tr, rows_pk = [], [], []
         for (caso, joint), r in resultados.items():
             dir_lbl = r['dir']
             F_op_cal = F_op_V_c if dir_lbl == 'Z' else F_op_H_c
             F_rd_cal = F_rd_V_c if dir_lbl == 'Z' else F_rd_H_c
 
-            # Operación: FRF a f_op
+            # ── ① Operación: FRF a f_op × F_op ──
             u_op  = r['frf_op'] * F_op_cal / F_REF_N
-            vp_op = v_peak(u_op, f_op)
-            vr_op = v_rms(u_op,  f_op)
-            r_op_lbl, r_op_col = classify(vp_op, RICHART_ZONES)
-            b_op_lbl, b_op_col = classify(vp_op, BLAKE_ZONES)
-            i_op_lbl, i_op_col = classify(vr_op, ISO_ZONES)
-
-            # Transitorio: valor fijo en f_rd, o envolvente de la curva de desbalance
-            u_rd, f_rd_eff, frf_rd_used, F_rd_used = transitorio_uf(
-                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
-            # Valor puntual en el cruce del aislador f_rd (informativo)
-            u_frd, f_frd, frd_en_rango = transitorio_en_frd(
-                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, n_apoyos)
-            vp_rd = v_peak(u_rd, f_rd_eff)
-            vr_rd = v_rms(u_rd,  f_rd_eff)
-            r_rd_lbl, _ = classify(vp_rd, RICHART_ZONES)
-            b_rd_lbl, _ = classify(vp_rd, BLAKE_ZONES)
-            i_rd_lbl, _ = classify(vr_rd, ISO_ZONES)
-
-            rows_class.append({
+            vp_op = v_peak(u_op, f_op); vr_op = v_rms(u_op, f_op)
+            rows_op.append({
                 'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
-                'f_peak (Hz)': round(r['f_pk'], 1),
-                # Operación: A_op = FRF_op · F_op / F_ref, evaluada en f_op
+                'f_op (Hz)': round(f_op, 2),
                 'FRF_op (mm/T)': round(r['frf_op'], 5),
                 'F_op (N)': round(F_op_cal, 0),
                 'A_op (mm)': round(u_op, 5),
                 'v_op (mm/s)': round(vp_op, 3),
                 'vRMS_op (mm/s)': round(vr_op, 3),
-                'Richart_op': r_op_lbl,
-                'Blake_op': b_op_lbl,
-                'ISO_op': i_op_lbl,
-                # Transitorio — PEOR caso del tramo: A_peor = FRF_peor · F_peor / F_ref
+                'Richart': classify(vp_op, RICHART_ZONES)[0],
+                'Blake':   classify(vp_op, BLAKE_ZONES)[0],
+                'ISO':     classify(vr_op, ISO_ZONES)[0],
+            })
+
+            # ── ② Transitorio: peor caso del tramo (+ punto f_rd) ──
+            u_rd, f_rd_eff, frf_rd_used, F_rd_used = transitorio_uf(
+                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, f_tr_lo, f_tr_hi, n_apoyos)
+            u_frd, f_frd, frd_en_rango = transitorio_en_frd(
+                r, F_rd_cal, modo_fuerza_tr, U_gmm, F_REF_N, n_apoyos)
+            vp_rd = v_peak(u_rd, f_rd_eff); vr_rd = v_rms(u_rd, f_rd_eff)
+            rows_tr.append({
+                'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
                 'f_peor (Hz)': round(f_rd_eff, 2),
                 'FRF_peor (mm/T)': round(frf_rd_used, 5),
                 'F_peor (N)': round(F_rd_used, 0),
                 'A_peor (mm)': round(u_rd, 4),
-                # Transitorio — valor PUNTUAL en el cruce del aislador f_rd (informativo;
-                # NaN si f_rd cae fuera del rango de datos cargados)
                 'A@f_rd (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
-                'Richart_rd': r_rd_lbl,
-                'ISO_rd': i_rd_lbl,
+                'Richart': classify(vp_rd, RICHART_ZONES)[0],
+                'Blake':   classify(vp_rd, BLAKE_ZONES)[0],
+                'ISO':     classify(vr_rd, ISO_ZONES)[0],
             })
 
-        df_class = pd.DataFrame(rows_class)
+            # ── ③ Peak en zona de exclusión: FRF_pk × F_op, evaluado a f_pk ──
+            u_pk  = r['frf_pk'] * F_op_cal / F_REF_N
+            vp_pk = v_peak(u_pk, r['f_pk']); vr_pk = v_rms(u_pk, r['f_pk'])
+            rows_pk.append({
+                'Caso': caso, 'Joint': joint, 'Dir': dir_lbl,
+                'f_peak (Hz)': round(r['f_pk'], 2),
+                'FRF_peak (mm/T)': round(r['frf_pk'], 5),
+                'Fase_peak (°)': round(r['fase_pk'], 1),
+                'F_op (N)': round(F_op_cal, 0),
+                'A_peak (mm)': round(u_pk, 5),
+                'v_peak (mm/s)': round(vp_pk, 3),
+                'vRMS_peak (mm/s)': round(vr_pk, 3),
+                'Richart': classify(vp_pk, RICHART_ZONES)[0],
+                'Blake':   classify(vp_pk, BLAKE_ZONES)[0],
+                'ISO':     classify(vr_pk, ISO_ZONES)[0],
+                'En zona': '✓' if r['en_zona'] else '—',
+                'Diagnóstico': r['diagnostico'],
+            })
+
+        df_op = pd.DataFrame(rows_op)
+        df_tr = pd.DataFrame(rows_tr)
+        df_pk = pd.DataFrame(rows_pk)
 
         # Advertencia: la ventana del transitorio no queda cubierta por los datos cargados
         if resultados:
@@ -876,7 +887,7 @@ with tab_class:
                 )
 
         # Mostrar con colores
-        col_crit = ['Richart_op','Blake_op','ISO_op','Richart_rd','ISO_rd']
+        crit_cols = ['Richart', 'Blake', 'ISO']
         def color_class(val):
             # Fija SIEMPRE color de fondo y de texto (oscuro) para asegurar contraste
             # tanto en tema claro como oscuro de Streamlit.
@@ -891,12 +902,23 @@ with tab_class:
                 return "background-color:#DCFCE7;color:#166534"
             return "color:#1F2937"
         
-        st.dataframe(
-            df_class.style.map(color_class, subset=col_crit),
-            use_container_width=True, height=400, hide_index=True
-        )
+        st.subheader("① Condición de operación (f_op)")
+        st.dataframe(df_op.style.map(color_class, subset=crit_cols),
+                     use_container_width=True, height=300, hide_index=True)
 
-        with st.expander("ℹ️ Cómo se calculan las amplitudes (operación y transitorio)"):
+        st.subheader("② Condición transitorio (partida / parada)")
+        st.dataframe(df_tr.style.map(color_class, subset=crit_cols),
+                     use_container_width=True, height=300, hide_index=True)
+
+        st.subheader("③ Condición peaks en zona de exclusión")
+        st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
+                   f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza de operación F_op. "
+                   "Evalúa la severidad si una resonancia estructural cae cerca de la operación "
+                   "(ver columnas Fase / En zona / Diagnóstico).")
+        st.dataframe(df_pk.style.map(color_class, subset=crit_cols),
+                     use_container_width=True, height=300, hide_index=True)
+
+        with st.expander("ℹ️ Cómo se calculan las amplitudes (3 condiciones)"):
             st.markdown(
                 "**Amplitud** en cada caso: $A = \\mathrm{FRF} \\cdot F / F_{ref}$, con la FRF "
                 "[mm/T] leída de SAP2000 y $F_{ref}$ = "
@@ -920,17 +942,27 @@ with tab_class:
                 "- **Curva desbalance:** $F(f)=m e\\,\\omega^2 / N_{apoyos}$ (desbalance total del "
                 "rotor **repartido entre los apoyos**). Crece con $f^2$, así que el peor caso "
                 "pondera FRF y fuerza y suele desplazarse hacia arriba.\n\n"
-                "**Cobertura de datos:** si la ventana solo solapa parcialmente con el barrido SAP, "
-                "el peor caso se busca **dentro del tramo con datos** — no en el extremo. Solo si la "
-                "ventana queda totalmente fuera se cae al punto más cercano (ver aviso amarillo). "
-                "Todo es **por nodo y caso**: cada fila tiene su propio peor caso."
+                "**③ Peaks en zona de exclusión** (`_peak`): toma el peak estructural de |H| dentro "
+                "de la zona de exclusión [0.8·fop, 1.2·fop] (columna `FRF_peak` a la frecuencia "
+                "`f_peak`) y lo excita con la **fuerza de operación** F_op. Responde *qué tan severa "
+                "sería la vibración si una resonancia estructural cae cerca de la operación*. Las "
+                "columnas `Fase_peak`, `En zona` y `Diagnóstico` indican si es una resonancia real "
+                "(fase ≈ 90°, peak dentro de la zona).\n\n"
+                "**Cobertura de datos:** si la ventana del transitorio solo solapa parcialmente con "
+                "el barrido SAP, el peor caso se busca **dentro del tramo con datos** — no en el "
+                "extremo. Solo si la ventana queda totalmente fuera se cae al punto más cercano (ver "
+                "aviso amarillo). Todo es **por nodo y caso**: cada fila tiene su propio peor caso."
             )
+
+        # Control de alto para las gráficas de amplitudes
+        alto_graf = st.slider("Alto de las gráficas de amplitudes (px)",
+                              min_value=400, max_value=1600, value=850, step=50)
 
         # Gráfico de barras v_RMS para ISO
         st.subheader("ISO 20816-3 — v_RMS por nodo y dirección")
-        
+
         # Ajustar el tope Y dinámicamente según el valor máximo de los datos
-        max_vrms = df_class['vRMS_op (mm/s)'].max() if not df_class.empty else 0
+        max_vrms = df_op['vRMS_op (mm/s)'].max() if not df_op.empty else 0
         if pd.isna(max_vrms): max_vrms = 0
         iso_top_y = max(max_vrms * 1.2, 10.0) # Asegura al menos ver hasta 10 mm/s
         
@@ -948,8 +980,8 @@ with tab_class:
             )
 
         dir_colors = {"X":"#1f77b4","Y":"#e74c3c","Z":"#27ae60"}
-        for dir_ in df_class['Dir'].unique():
-            df_d = df_class[df_class['Dir']==dir_]
+        for dir_ in df_op['Dir'].unique():
+            df_d = df_op[df_op['Dir']==dir_]
             labels = df_d['Joint'].astype(str) + "<br>(" + df_d['Caso'].astype(str) + ")"
             fig_iso.add_trace(go.Bar(
                 name=f"Dir {dir_} — Operación",
@@ -963,7 +995,7 @@ with tab_class:
             title="ISO 20816-3 — Velocidad eficaz v_RMS en operación",
             yaxis_title="v_RMS (mm/s)", xaxis_title="Punto de apoyo",
             yaxis=dict(range=[0, iso_top_y]), # Aplicando el tope dinámico
-            barmode="group", height=500,
+            barmode="group", height=alto_graf,
             font=dict(family="Arial"),
             legend=dict(orientation="h", yanchor="bottom", y=-0.3)
         )
@@ -1039,7 +1071,7 @@ with tab_class:
 
         fig_rich.update_layout(
             title="Richart Fig. 10-1 — Amplitud vs Frecuencia",
-            height=850, font=dict(family="Arial"), 
+            height=alto_graf, font=dict(family="Arial"),
             legend=dict(orientation="h", yanchor="bottom", y=-0.15),
             margin=dict(l=60, r=40, t=60, b=60), 
             plot_bgcolor='rgba(0,0,0,0)', 
@@ -1114,7 +1146,7 @@ with tab_class:
         
         fig_blake.update_layout(
             title="Blake Fig. 10-2 — Amplitud vs Frecuencia",
-            height=850, font=dict(family="Arial"), 
+            height=alto_graf, font=dict(family="Arial"), 
             legend=dict(orientation="h", yanchor="bottom", y=-0.15),
             margin=dict(l=60, r=40, t=60, b=60), 
             plot_bgcolor='rgba(0,0,0,0)', 
