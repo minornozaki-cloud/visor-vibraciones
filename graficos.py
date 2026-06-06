@@ -28,9 +28,11 @@ st.set_page_config(
 )
 
 # Se eliminaron los colores forzados para garantizar compatibilidad 100% con Dark/Light Mode nativo.
+# Zoom de página al 90% (la propiedad CSS `zoom` funciona en navegadores Chromium: Chrome/Edge).
 st.markdown("""
 <style>
 .stDataFrame { font-size: 12px; }
+.stApp { zoom: 0.9; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -412,6 +414,8 @@ with st.sidebar:
     f_excl_lo = z_lo * f_op
     f_excl_hi = z_hi * f_op
     st.caption(f"= {f_excl_lo:.2f} – {f_excl_hi:.2f} Hz")
+    st.caption("Por defecto [0.8·fop, 1.2·fop] (ACI 351.3R): banda ±20% alrededor de la "
+               "frecuencia de operación donde no deben caer frecuencias naturales.")
 
     st.divider()
     modo_cond = st.selectbox("Condición a graficar",
@@ -421,7 +425,8 @@ with st.sidebar:
     with st.expander("⚙️ Avanzado — Unidades y criterios"):
         F_REF_N = st.number_input("Fuerza de referencia (N por unidad de carga)",
                                   value=9810.0, step=10.0, format="%.0f",
-                                  help="SAP2000: 1 Ton = 9810 N. La FRF se normaliza por esta fuerza.")
+                                  help="SAP2000: 1 tonf = 1000 kgf = 9810 N. La FRF se normaliza por "
+                                       "esta carga unitaria de referencia.")
         factor_despl = st.number_input("Factor de unidad de desplazamiento", value=10.0, step=1.0,
                                        format="%.2f", help="Convierte la salida de SAP a mm. cm→mm: ×10.")
         st.markdown("**Límites ISO 20816-3 (v_RMS, mm/s)**")
@@ -475,7 +480,7 @@ with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
         "| **F_op** | Fuerza dinámica en operación (a f_op). |\n"
         "| **U = m·e** | Desbalance del **rotor** (g·mm): m = masa rotante, e = excentricidad. Genera F(f) = m·e·ω², con ω = 2·π·f. |\n"
         "| **G (ISO 1940-1)** | Grado de calidad de balanceo (mm/s). Define U = m·1000·G/ω. |\n"
-        "| **F_ref** | Fuerza de referencia con que se normalizó la FRF (SAP: 1 Ton = 9810 N). |\n"
+        "| **F_ref** | Carga unitaria de referencia con que se normalizó la FRF (SAP: 1 tonf = 1000 kgf = 9810 N). |\n"
         "| **K_din** | Rigidez **dinámica** del aislador (N/mm). |\n"
         "| **K_est** | Rigidez **estática** del sistema en operación: K_est = F_ref / FRF_op. |\n"
         "| **RF = K_est/K_din** | Razón de rigidez (Hutchinson). Debe ser ≥ 10 para aislamiento efectivo. |\n"
@@ -1840,5 +1845,5 @@ with tab_report:
 st.divider()
 st.caption(
     "Analizador Dinámico — ACI 351.3R-04 · ISO 20816-3:2022 · Richart (1962) · Blake (1964) "
-    "| Datos: SAP2000 v27.1.0 (Kgf, cm, C) | F_ref = 1 Ton = 9810 N"
+    "| Datos: SAP2000 v27.1.0 (Kgf, cm, C) | F_ref = 1 tonf = 1000 kgf (9810 N)"
 )
