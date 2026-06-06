@@ -347,6 +347,10 @@ with st.sidebar:
         if U_gmm > 0:
             F_op_total = (U_gmm/1e6)*(2*math.pi*f_op)**2
             st.caption(f"A f_op: F_total = {F_op_total:.0f} N → {F_op_total/n_apoyos:.0f} N por apoyo")
+        else:
+            st.warning("Desbalance **U = 0**. Con U=0 la fuerza F(f)=m·e·ω² es **0**, así que la "
+                       "**condición transitoria no se calcula ni se grafica**. Ingresa U (o la masa "
+                       "del rotor y el grado G) para ver el transitorio.", icon="⚠️")
         st.caption("Ref.: ISO 1940-1; Arya, O'Neill & Pincus (1979); Den Hartog, *Mechanical "
                    "Vibrations*. **Definición referencial** — reemplazar por la curva "
                    "fuerza–frecuencia del fabricante cuando esté disponible.")
@@ -1288,6 +1292,19 @@ with tab_class:
                 line=dict(color=data["col"], width=2, dash='solid', shape='linear'),
                 showlegend=True, hovertemplate=f"{lbl}<extra></extra>"
             ))
+
+        # Zona A — Sin fallas: es el ÁREA bajo la línea B (no tiene línea propia).
+        # Se indica con entrada de leyenda + etiqueta para que sea visible.
+        fig_blake.add_trace(go.Scatter(
+            x=[None], y=[None], mode='lines', line=dict(color="#1a9850", width=8),
+            name="A — Sin fallas (área bajo línea B)", showlegend=True, hoverinfo='skip'
+        ))
+        fig_blake.add_annotation(
+            x=math.log10(125), y=math.log10(0.005), xref="x", yref="y",
+            text="Zona A<br>Sin fallas", showarrow=False,
+            font=dict(color="#1a9850", size=11),
+            bgcolor="rgba(255,255,255,0.6)", borderpad=2
+        )
 
         plotted_blake = set()
         for (caso, joint), r in resultados.items():
