@@ -28,11 +28,12 @@ st.set_page_config(
 )
 
 # Se eliminaron los colores forzados para garantizar compatibilidad 100% con Dark/Light Mode nativo.
-# Zoom de página al 90% (la propiedad CSS `zoom` funciona en navegadores Chromium: Chrome/Edge).
+# NOTA: NO usar `zoom: 0.9` en CSS — rompe el hover/tooltips de Plotly (descoloca las
+# coordenadas del mouse). Para reducir la página, usa el zoom nativo del navegador (Ctrl + -),
+# que sí conserva el hover.
 st.markdown("""
 <style>
 .stDataFrame { font-size: 12px; }
-.stApp { zoom: 0.9; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,7 +206,7 @@ def transitorio_en_frd(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, n_apoyos=1):
 def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, ylim):
     """Diagrama log-log de clasificación (Richart/Blake) en matplotlib, para el Word.
     - lines: {label: {'x':[cpm], 'y':[mm], 'col':hex, 'dash':'solid'|'dash'}}
-    - puntos: lista de (f_cpm, A_mm, etiqueta, color_hex, marker)  ['o'=Op, '^'=Tr]
+    - puntos: lista de (f_cpm, A_mm, etiqueta, color_hex, marker)  ['o'=Op, '^'=Tr, 'x'=Peak]
     """
     fig, ax = plt.subplots(figsize=(9, 6.2))
     for lbl, d in lines.items():
@@ -269,7 +270,9 @@ with st.sidebar:
                                     "fuerza total de desbalance entre los apoyos.")
 
     st.divider()
-    st.markdown(f"**Cargas del fabricante (N/apoyo = total ÷ {int(n_apoyos)})**")
+    st.markdown("**Cargas del fabricante (N, por apoyo)**")
+    st.caption("Estos valores se ingresan **ya por apoyo** (la fuerza que llega a cada aislador). "
+               "El **N° de apoyos** no los divide; solo reparte el desbalance del modo *Curva*.")
     col1, col2 = st.columns(2)
     with col1:
         F_op_V  = st.number_input("F_op vertical",     value=425,  step=50)
@@ -370,9 +373,11 @@ with st.sidebar:
             st.caption(f"U = m·1000·G/ω = **{U_gmm:,.1f} g·mm** (G{G_grade}, f_op = {f_op:.1f} Hz)")
         else:
             U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
-                                    help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso "
-                                         "total del equipo), e = excentricidad. F(f) = m·e·ω², con "
-                                         "ω = 2·π·f.")
+                                    help="U = m·e del ROTOR, en **g·mm** (gramo·milímetro): "
+                                         "m = masa de la parte ROTANTE en **gramos** (NO el peso total "
+                                         "del equipo), e = excentricidad en **mm**. F(f) = m·e·ω², con "
+                                         "ω = 2·π·f. Ej.: 3000 kg = 3 000 000 g; si e = 0.01 mm → "
+                                         "U = 30 000 g·mm.")
         st.caption(f"Reparto entre **{int(n_apoyos)} apoyos** (configurado en *Equipo → N° de apoyos*). "
                    "La FRF de SAP está normalizada por apoyo (1 ton/apoyo).")
         if U_gmm > 0:
@@ -419,7 +424,9 @@ with st.sidebar:
 
     st.divider()
     modo_cond = st.selectbox("Condición a graficar",
-                             ["Operación", "Transitorio", "Ambas"], index=0)
+                             ["Operación", "Transitorio", "Peak zona excl.", "Todas"], index=0,
+                             help="Símbolos en las gráficas: ● Operación · ▲ Transitorio · ✖ Peak en "
+                                  "zona de exclusión.")
 
     st.divider()
     with st.expander("⚙️ Avanzado — Unidades y criterios"):
@@ -1166,14 +1173,18 @@ with tab_class:
         def _hex_joint_app(j):
             return '#%02x%02x%02x' % tuple(int(x*255) for x in color_joint(_joints_all, j)[:3])
         puntos_cl_app = []
-        if modo_cond in ["Operación", "Ambas"]:
+        if modo_cond in ["Operación", "Todas"]:
             for rr in rows_op:
                 puntos_cl_app.append((f_op*60, rr['A_op (mm)'], str(rr['Joint']),
                                       _hex_joint_app(rr['Joint']), 'o'))
-        if modo_cond in ["Transitorio", "Ambas"]:
+        if modo_cond in ["Transitorio", "Todas"]:
             for rr in rows_tr:
                 puntos_cl_app.append((rr['f_peor (Hz)']*60, rr['A_peor (mm)'], str(rr['Joint']),
                                       _hex_joint_app(rr['Joint']), '^'))
+        if modo_cond in ["Peak zona excl.", "Todas"]:
+            for rr in rows_pk:
+                puntos_cl_app.append((rr['f_peak (Hz)']*60, rr['A_peak (mm)'], str(rr['Joint']),
+                                      _hex_joint_app(rr['Joint']), 'x'))
 
         def descarga_png_mpl(fig, nombre, etiqueta):
             """Exporta una figura matplotlib (misma calidad que el reporte) como PNG."""
@@ -1270,10 +1281,15 @@ with tab_class:
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
 
             puntos_a_graficar = []
-            if modo_cond in ["Operación", "Ambas"]:
+            if modo_cond in ["Operación", "Todas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
-            if modo_cond in ["Transitorio", "Ambas"]:
+            if modo_cond in ["Transitorio", "Todas"]:
                 puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
+            if modo_cond in ["Peak zona excl.", "Todas"]:
+                F_pk_g = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
+                                          F_op_cal, U_gmm, n_apoyos)[0])
+                u_pk_g = r['frf_pk'] * F_pk_g / F_REF_N
+                puntos_a_graficar.append((u_pk_g, r['f_pk'], "Peak", "x"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
@@ -1362,10 +1378,15 @@ with tab_class:
                     sorted(set(rv['joint'] for rv in resultados.values())), joint)[:3])
 
             puntos_a_graficar = []
-            if modo_cond in ["Operación", "Ambas"]:
+            if modo_cond in ["Operación", "Todas"]:
                 puntos_a_graficar.append((u_op, f_op, "Op", "circle"))
-            if modo_cond in ["Transitorio", "Ambas"]:
+            if modo_cond in ["Transitorio", "Todas"]:
                 puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
+            if modo_cond in ["Peak zona excl.", "Todas"]:
+                F_pk_g = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
+                                          F_op_cal, U_gmm, n_apoyos)[0])
+                u_pk_g = r['frf_pk'] * F_pk_g / F_REF_N
+                puntos_a_graficar.append((u_pk_g, r['f_pk'], "Peak", "x"))
 
             for u_val, f_val, cond_lbl, sym in puntos_a_graficar:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
