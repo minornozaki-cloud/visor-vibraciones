@@ -28,12 +28,13 @@ st.set_page_config(
 )
 
 # Se eliminaron los colores forzados para garantizar compatibilidad 100% con Dark/Light Mode nativo.
-# NOTA: NO usar `zoom: 0.9` en CSS — rompe el hover/tooltips de Plotly (descoloca las
-# coordenadas del mouse). Para reducir la página, usa el zoom nativo del navegador (Ctrl + -),
-# que sí conserva el hover.
+# Zoom de página al 90% (CSS `zoom`). En navegadores modernos (Chrome/Edge 2024+) convive con el
+# hover de Plotly; en versiones antiguas podía descolocar los tooltips. Si el hover fallara, usar
+# el zoom nativo del navegador (Ctrl + -) en su lugar.
 st.markdown("""
 <style>
 .stDataFrame { font-size: 12px; }
+.stApp { zoom: 0.9; }
 </style>
 """, unsafe_allow_html=True)
 
