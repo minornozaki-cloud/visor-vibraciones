@@ -259,12 +259,15 @@ with st.sidebar:
     f_op_rpm = st.number_input("Frecuencia de operación (RPM)", value=2900.0, step=10.0, format="%.0f")
     f_op = f_op_rpm / 60.0
     st.caption(f"= {f_op:.2f} Hz (máxima del equipo)")
-    W_pata = st.number_input("Peso del equipo por pata (kgf)", value=0.0, step=100.0, format="%.0f",
+    W_pata = st.number_input("Peso del equipo por apoyo (kgf)", value=0.0, step=100.0, format="%.0f",
                              help="Peso estático por apoyo, en kgf (= masa en kg). Necesario para "
                                   "calcular f_rd del aislador. Si lo dejas en 0, ingresa f_rd manual.")
+    n_apoyos = st.number_input("N° de apoyos", value=4, min_value=1, step=1,
+                               help="Número de apoyos del equipo. Se usa para repartir la "
+                                    "fuerza total de desbalance entre los apoyos.")
 
     st.divider()
-    st.markdown("**Cargas del fabricante (N/pata = total ÷ 4)**")
+    st.markdown(f"**Cargas del fabricante (N/apoyo = total ÷ {int(n_apoyos)})**")
     col1, col2 = st.columns(2)
     with col1:
         F_op_V  = st.number_input("F_op vertical",     value=425,  step=50)
@@ -275,37 +278,64 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**Aislador**")
-    K_din = st.number_input("K_din aislador (N/mm)", value=5600.0, step=100.0, format="%.0f")
-    st.caption("Novibra RAEM2500: 5600 N/mm")
+    K_din_V = st.number_input("K_din vertical (N/mm)", value=5600.0, step=100.0, format="%.0f",
+                              help="Rigidez dinámica vertical del aislador.")
+    lat_igual = st.checkbox("Rigidez lateral = vertical", value=True,
+                            help="Los aisladores elastoméricos suelen tener rigidez lateral "
+                                 "distinta a la vertical. Desmárcalo para ingresarla por separado; "
+                                 "afecta a la f_rd de las direcciones horizontales.")
+    if lat_igual:
+        K_din_L = K_din_V
+    else:
+        K_din_L = st.number_input("K_din lateral (N/mm)", value=5600.0, step=100.0, format="%.0f",
+                                  help="Rigidez dinámica lateral (horizontal) del aislador.")
+    K_din = K_din_V  # referencia vertical para encabezado/compatibilidad
 
     st.divider()
     st.markdown("**Transitorio (partida / parada)**")
     # Frecuencia del modo de cuerpo rígido del equipo sobre el aislador:
     #   f_rd = (1/2π)·√(k/m)  con  k = K_din[N/m]  y  m = W_pata[kgf] = masa[kg]
+    # Se calcula por dirección: vertical (K_din_V) y lateral (K_din_L).
     if W_pata > 0:
-        f_rd_calc = (1.0/(2*math.pi)) * math.sqrt(K_din*1000.0 / W_pata)
-        st.caption(f"f_rd calculada (aislador): **{f_rd_calc:.2f} Hz**")
+        f_rd_V_calc = (1.0/(2*math.pi)) * math.sqrt(K_din_V*1000.0 / W_pata)
+        f_rd_L_calc = (1.0/(2*math.pi)) * math.sqrt(K_din_L*1000.0 / W_pata)
+        if abs(f_rd_V_calc - f_rd_L_calc) < 1e-6:
+            st.caption(f"f_rd calculada (aislador): **{f_rd_V_calc:.2f} Hz**")
+        else:
+            st.caption(f"f_rd calculada — vertical: **{f_rd_V_calc:.2f} Hz** · "
+                       f"lateral: **{f_rd_L_calc:.2f} Hz**")
     else:
-        f_rd_calc = None
-        st.caption("Ingresa el peso por pata para calcular f_rd automáticamente.")
+        f_rd_V_calc = f_rd_L_calc = None
+        st.caption("Ingresa el peso por apoyo para calcular f_rd automáticamente.")
     _help_frd = ("f_rd es la frecuencia del **modo de cuerpo rígido** del equipo sobre el "
                  "aislador:\n\n**f_rd = (1/2π)·√(K_din / m)**\n\n"
-                 "con K_din = rigidez dinámica del aislador y m = masa por apoyo. "
+                 "con K_din = rigidez dinámica del aislador y m = masa por apoyo. Se calcula por "
+                 "dirección: la **vertical** usa K_din vertical y la **lateral** usa K_din lateral. "
                  "Corresponde a la frecuencia que el equipo **atraviesa al partir o detenerse** "
                  "(condición transitoria de partida/parada): al subir o bajar de RPM, la "
                  "máquina cruza esta resonancia.\n\n"
-                 "• **Calculada**: se obtiene de la expresión con el peso por pata.\n"
+                 "• **Calculada**: se obtiene de la expresión con el peso por apoyo.\n"
                  "• **Manual**: debe ser **otorgada por el fabricante** del aislador.")
     origen_frd = st.radio("Origen de f_rd", ["Calculada", "Manual"],
-                          index=1 if f_rd_calc is None else 0, horizontal=True,
+                          index=1 if f_rd_V_calc is None else 0, horizontal=True,
                           help=_help_frd)
-    if origen_frd == "Calculada" and f_rd_calc is not None:
-        f_rd = f_rd_calc
+    if origen_frd == "Calculada" and f_rd_V_calc is not None:
+        f_rd_V, f_rd_L = f_rd_V_calc, f_rd_L_calc
     else:
-        f_rd = st.number_input("f_rd manual (Hz)", value=3.5, step=0.1, format="%.2f",
-                               help="Valor de f_rd (frecuencia de partida/parada) **otorgado "
-                                    "por el fabricante** del aislador, en Hz.")
-    st.caption(f"f_rd en uso: **{f_rd:.2f} Hz**")
+        f_rd_V = st.number_input("f_rd manual — vertical (Hz)", value=3.5, step=0.1, format="%.2f",
+                                 help="Valor de f_rd vertical (partida/parada) **otorgado por el "
+                                      "fabricante** del aislador, en Hz.")
+        if lat_igual:
+            f_rd_L = f_rd_V
+        else:
+            f_rd_L = st.number_input("f_rd manual — lateral (Hz)", value=3.5, step=0.1, format="%.2f",
+                                     help="Valor de f_rd lateral (horizontal) del aislador, en Hz.")
+    # Valor representativo para la ventana del barrido y el encabezado (cubre ambos cruces)
+    f_rd = min(f_rd_V, f_rd_L)
+    if abs(f_rd_V - f_rd_L) < 1e-6:
+        st.caption(f"f_rd en uso: **{f_rd_V:.2f} Hz**")
+    else:
+        st.caption(f"f_rd en uso — vertical: **{f_rd_V:.2f} Hz** · lateral: **{f_rd_L:.2f} Hz**")
 
     modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
                                   ["Valor fijo: F(f) = F_rd", "Curva desbalance: F(f) = m·e·ω²"],
@@ -341,9 +371,8 @@ with st.sidebar:
                                     help="U = m·e del ROTOR: m = masa de la parte ROTANTE (NO el peso "
                                          "total del equipo), e = excentricidad. F(f) = m·e·ω², con "
                                          "ω = 2·π·f.")
-        n_apoyos = st.number_input("N° de apoyos (reparto por pata)", value=4, min_value=1, step=1,
-                                   help="La FRF de SAP está normalizada por apoyo (1 ton/pata), así que "
-                                        "la fuerza de desbalance total se divide entre los apoyos.")
+        st.caption(f"Reparto entre **{int(n_apoyos)} apoyos** (configurado en *Equipo → N° de apoyos*). "
+                   "La FRF de SAP está normalizada por apoyo (1 ton/apoyo).")
         if U_gmm > 0:
             F_op_total = (U_gmm/1e6)*(2*math.pi*f_op)**2
             st.caption(f"A f_op: F_total = {F_op_total:.0f} N → {F_op_total/n_apoyos:.0f} N por apoyo")
@@ -356,7 +385,6 @@ with st.sidebar:
                    "fuerza–frecuencia del fabricante cuando esté disponible.")
     else:
         U_gmm = 0.0
-        n_apoyos = 1
 
     st.markdown("**Ventana del transitorio (barrido)**")
     auto_win = st.checkbox("Auto: f_rd → f_op", value=True,
@@ -406,11 +434,15 @@ with st.sidebar:
 # HEADER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("📊 Analizador Dinámico — Plataformas de Soporte para Equipos Rotativos")
+_frd_hdr = (f"{f_rd_V:.2f} Hz" if abs(f_rd_V - f_rd_L) < 1e-6
+            else f"V {f_rd_V:.2f} · L {f_rd_L:.2f} Hz")
+_kdin_hdr = (f"{K_din_V:.0f} N/mm" if abs(K_din_V - K_din_L) < 1e-6
+             else f"V {K_din_V:.0f} · L {K_din_L:.0f} N/mm")
 st.markdown(
     f"**Operación:** {f_op_rpm:.0f} RPM ({f_op:.2f} Hz) | "
-    f"**Transitorio f_rd:** {f_rd:.2f} Hz | "
+    f"**Transitorio f_rd:** {_frd_hdr} | "
     f"**Zona de exclusión ACI 351.3R:** {f_excl_lo:.2f} – {f_excl_hi:.2f} Hz | "
-    f"**K_din aislador:** {K_din:.0f} N/mm"
+    f"**K_din aislador:** {_kdin_hdr}"
 )
 
 with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
@@ -448,7 +480,7 @@ with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
         "| **K_est** | Rigidez **estática** del sistema en operación: K_est = F_ref / FRF_op. |\n"
         "| **RF = K_est/K_din** | Razón de rigidez (Hutchinson). Debe ser ≥ 10 para aislamiento efectivo. |\n"
         "| **W_pata** | Peso estático por apoyo (kgf = masa en kg). |\n"
-        "| **N° de apoyos** | Número de patas; reparte la fuerza total de desbalance por apoyo. |\n"
+        "| **N° de apoyos** | Número de apoyos; reparte la fuerza total de desbalance por apoyo. |\n"
         "\n"
         "#### Clasificación de amplitudes\n"
         "- **Richart (Fig. 10-1)** y **Blake (Fig. 10-2)**: cartas amplitud–frecuencia para clasificar severidad.\n"
@@ -578,7 +610,7 @@ C14,STST_X,LinSteadyState,Imag at Freq,57.30,-9.784E-02,-3.1E-03,-9.2E-04,0,0,0"
 # PROCESAMIENTO CENTRAL
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, factor_despl_, dir_override_json):
+def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_v_, f_rd_l_, factor_despl_, dir_override_json):
     if not df_raw_json:
         return {}, pd.DataFrame()
     df = pd.read_json(io.StringIO(df_raw_json))
@@ -628,7 +660,10 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, factor_despl_, d
             frf_op  = frf_mm[idx_op]
             fase_op = fase_deg[idx_op]
 
-            # Transitorio (partida/parada): FRF en el cruce resonante del aislador f_rd
+            # Transitorio (partida/parada): FRF en el cruce resonante del aislador f_rd.
+            # f_rd depende de la dirección: vertical (Z) usa K_din vertical; las
+            # horizontales (X/Y) usan K_din lateral.
+            f_rd_ = f_rd_v_ if dir_lbl == 'Z' else f_rd_l_
             idx_rd  = np.argmin(np.abs(freqs - f_rd_))
             frf_rd  = frf_mm[idx_rd]
             fase_rd = fase_deg[idx_rd]
@@ -676,7 +711,7 @@ def procesar(df_raw_json, f_op_, f_excl_lo_, f_excl_hi_, f_rd_, factor_despl_, d
 
 if not df_raw.empty:
     resultados, df_res = procesar(
-        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd, factor_despl,
+        df_raw.to_json(), f_op, f_excl_lo, f_excl_hi, f_rd_V, f_rd_L, factor_despl,
         json.dumps({str(k): list(v) for k, v in dir_override.items()}, sort_keys=True)
     )
 else:
@@ -850,13 +885,15 @@ with tab_corto:
             if frf_op <= 0:
                 continue
             k_est = F_REF_N / frf_op
+            kdin_dir = K_din_V if r['dir'] == 'Z' else K_din_L  # vertical vs lateral
             rows_cc.append({
                 'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
                 'FRF_op (mm/T)': round(frf_op, 4),
                 'f_pk (Hz)': round(r['f_pk'], 1),
                 'K_est (N/mm)': round(k_est, 0),
-                'K_est/K_din': round(k_est / K_din, 2),
-                'Cumple 10:1': '✓ Sí' if k_est / K_din >= ratio_obj else '✗ No',
+                'K_din (N/mm)': round(kdin_dir, 0),
+                'K_est/K_din': round(k_est / kdin_dir, 2),
+                'Cumple 10:1': '✓ Sí' if k_est / kdin_dir >= ratio_obj else '✗ No',
             })
         df_cc = pd.DataFrame(rows_cc)
         if df_cc.empty:
@@ -868,7 +905,9 @@ with tab_corto:
 
             m1, m2 = st.columns(2)
             m1.metric("Ratio mínimo K_est/K_din", f"{ratio_min:.2f}")
-            m2.metric("K_din aislador", f"{K_din:.0f} N/mm")
+            _kdin_txt = (f"{K_din_V:.0f} N/mm" if abs(K_din_V - K_din_L) < 1e-6
+                         else f"V {K_din_V:.0f} · L {K_din_L:.0f} N/mm")
+            m2.metric("K_din aislador", _kdin_txt)
             if cumple:
                 st.success(f"✓ Cumple: K_est/K_din = {ratio_min:.2f} ≥ {ratio_obj:.0f}.")
             else:
@@ -1566,10 +1605,12 @@ with tab_report:
                 for (caso, joint), r in resultados.items():
                     if r['frf_op'] <= 0: continue
                     k_est = F_REF_N / r['frf_op']
+                    kdin_dir = K_din_V if r['dir'] == 'Z' else K_din_L
                     cc_rows.append({'Caso': caso, 'Joint': joint, 'Dir': r['dir'],
                         'FRF_op (mm/T)': round(r['frf_op'], 4), 'K_est (N/mm)': round(k_est, 0),
-                        'K_est/K_din': round(k_est/K_din, 2),
-                        'Cumple 10:1': 'Sí' if k_est/K_din >= 10 else 'No'})
+                        'K_din (N/mm)': round(kdin_dir, 0),
+                        'K_est/K_din': round(k_est/kdin_dir, 2),
+                        'Cumple 10:1': 'Sí' if k_est/kdin_dir >= 10 else 'No'})
                 df_cc_r = pd.DataFrame(cc_rows)
 
                 cl_rows = []
@@ -1626,9 +1667,9 @@ with tab_report:
                 add_h2("Cargas del fabricante y parámetros")
                 df_par = pd.DataFrame([
                     {'Parámetro': 'Frecuencia de operación', 'Valor': f"{f_op:.2f} Hz ({f_op_rpm:.0f} RPM)"},
-                    {'Parámetro': 'Frecuencia transitorio f_rd', 'Valor': f"{f_rd:.2f} Hz"},
+                    {'Parámetro': 'Frecuencia transitorio f_rd', 'Valor': _frd_hdr},
                     {'Parámetro': 'Zona de exclusión', 'Valor': f"{f_excl_lo:.2f} – {f_excl_hi:.2f} Hz"},
-                    {'Parámetro': 'K_din aislador', 'Valor': f"{K_din:.0f} N/mm"},
+                    {'Parámetro': 'K_din aislador', 'Valor': _kdin_hdr},
                     {'Parámetro': 'F_op (V / H) por apoyo', 'Valor': f"{F_op_V} / {F_op_H} N"},
                     {'Parámetro': 'F_rd (V / H) por apoyo', 'Valor': f"{F_rd_V} / {F_rd_H} N"},
                     {'Parámetro': 'Fuerza de referencia', 'Valor': f"{F_REF_N:.0f} N"},
