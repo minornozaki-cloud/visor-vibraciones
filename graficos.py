@@ -94,6 +94,48 @@ def v_peak(amp_mm, f_hz):
 def v_rms(amp_mm, f_hz):
     return v_peak(amp_mm, f_hz) / math.sqrt(2)
 
+# ── Clasificación por las MISMAS curvas amplitud–frecuencia del diagrama ──
+# Richart/Blake NO son líneas de velocidad constante, así que clasificar por
+# umbral de velocidad no coincide con el gráfico. Aquí se clasifica el punto
+# (frecuencia[cpm], amplitud[mm]) interpolando las curvas en log-log (igual que
+# se dibujan), de modo que TABLA y GRÁFICA siempre coinciden.
+def _interp_loglog(x_cpm, xs, ys):
+    lx = math.log10(max(float(x_cpm), 1e-9))
+    lxs = [math.log10(v) for v in xs]
+    lys = [math.log10(v) for v in ys]
+    return 10.0 ** float(np.interp(lx, lxs, lys))
+
+# Orden ascendente de fronteras: (clave de la línea en *_LINES, etiqueta de la
+# zona que queda DEBAJO de esa línea).
+RICHART_ORDER = [
+    ("No perceptible",         "No perceptible"),
+    ("Apenas perceptible",     "Apenas perceptible"),
+    ("Fácilmente perceptible", "Fácilmente perceptible"),
+    ("Molesta (personas)",     "Molesta (personas)"),
+    ("Severa (personas)",      "Severa (personas)"),
+    ("Límite máquinas",        "Límite máquinas"),
+    ("Precaución estructuras", "Precaución estructuras"),
+    ("Peligro estructuras",    "Peligro estructuras"),
+]
+RICHART_TOP = "Peligro estructuras"
+BLAKE_ORDER = [
+    ("B — Fallas menores",  "A — Sin fallas"),
+    ("C — Defectuoso",      "B — Fallas menores"),
+    ("D — Falla inminente", "C — Defectuoso"),
+    ("E — Peligroso",       "D — Falla inminente"),
+]
+BLAKE_TOP = "E — Peligroso"
+
+def classify_curve(f_cpm, amp_mm, lines, order, top_label):
+    """Clasifica un punto (frecuencia[cpm], amplitud[mm]) según las curvas
+    amplitud–frecuencia del diagrama, interpolando en log-log. Coherente con
+    lo que se ve en la gráfica."""
+    for key, label_below in order:
+        ln = lines[key]
+        if amp_mm <= _interp_loglog(f_cpm, ln["x"], ln["y"]):
+            return label_below
+    return top_label
+
 def auto_dir(caso):
     """Detección automática de columna de respuesta y dirección desde el nombre del caso."""
     caso_u = str(caso).upper()
@@ -886,8 +928,8 @@ with tab_class:
                 'A_op (mm)': round(u_op, 5),
                 'v_op (mm/s)': round(vp_op, 3),
                 'vRMS_op (mm/s)': round(vr_op, 3),
-                'Richart': classify(vp_op, RICHART_ZONES)[0],
-                'Blake':   classify(vp_op, BLAKE_ZONES)[0],
+                'Richart': classify_curve(f_op*60, u_op, RICHART_LINES, RICHART_ORDER, RICHART_TOP),
+                'Blake':   classify_curve(f_op*60, u_op, BLAKE_LINES, BLAKE_ORDER, BLAKE_TOP),
                 'ISO':     classify(vr_op, ISO_ZONES)[0],
             })
 
@@ -910,8 +952,8 @@ with tab_class:
                 'A(f_rd) (mm)': round(u_frd, 4) if frd_en_rango else float('nan'),
                 'v_rd (mm/s)': round(vp_rd, 2),
                 'vRMS_rd (mm/s)': round(vr_rd, 2),
-                'Richart': classify(vp_rd, RICHART_ZONES)[0],
-                'Blake':   classify(vp_rd, BLAKE_ZONES)[0],
+                'Richart': classify_curve(f_rd_eff*60, u_rd, RICHART_LINES, RICHART_ORDER, RICHART_TOP),
+                'Blake':   classify_curve(f_rd_eff*60, u_rd, BLAKE_LINES, BLAKE_ORDER, BLAKE_TOP),
                 'ISO':     classify(vr_rd, ISO_ZONES)[0],
             })
 
@@ -933,8 +975,8 @@ with tab_class:
                 'A_peak (mm)': round(u_pk, 5),
                 'v_peak (mm/s)': round(vp_pk, 3),
                 'vRMS_peak (mm/s)': round(vr_pk, 3),
-                'Richart': classify(vp_pk, RICHART_ZONES)[0],
-                'Blake':   classify(vp_pk, BLAKE_ZONES)[0],
+                'Richart': classify_curve(r['f_pk']*60, u_pk, RICHART_LINES, RICHART_ORDER, RICHART_TOP),
+                'Blake':   classify_curve(r['f_pk']*60, u_pk, BLAKE_LINES, BLAKE_ORDER, BLAKE_TOP),
                 'ISO':     classify(vr_pk, ISO_ZONES)[0],
                 'En zona': '✓' if r['en_zona'] else '—',
                 'Diagnóstico': r['diagnostico'],
