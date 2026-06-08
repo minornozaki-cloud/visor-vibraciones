@@ -372,11 +372,12 @@ with st.sidebar:
             st.caption(f"U = m·1000·G/ω = **{U_gmm:,.1f} g·mm** (G{G_grade}, f_op = {f_op:.1f} Hz)")
         else:
             U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
-                                    help="U = m·e del ROTOR, en **g·mm** (gramo·milímetro): "
-                                         "m = masa de la parte ROTANTE en **gramos** (NO el peso total "
-                                         "del equipo), e = excentricidad en **mm**. F(f) = m·e·ω², con "
-                                         "ω = 2·π·f. Ej.: 3000 kg = 3 000 000 g; si e = 0.01 mm → "
-                                         "U = 30 000 g·mm.")
+                                    help="U = desbalance del ROTOR en **g·mm** (estándar ISO 1940). "
+                                         "Es el producto masa·excentricidad. Si tienes la masa en kg "
+                                         "y la excentricidad en mm: **U[g·mm] = masa[kg] × 1000 × "
+                                         "e[mm]**. Ej.: 3000 kg con e = 0.01 mm → U = 30 000 g·mm. "
+                                         "(En el modo *Grado ISO 1940* ingresas la masa en kg y el "
+                                         "app calcula U solo.) F(f) = m·e·ω², con ω = 2·π·f.")
         st.caption(f"Reparto entre **{int(n_apoyos)} apoyos** (configurado en *Equipo → N° de apoyos*). "
                    "La FRF de SAP está normalizada por apoyo (1 ton/apoyo).")
         if U_gmm > 0:
