@@ -28,13 +28,11 @@ st.set_page_config(
 )
 
 # Se eliminaron los colores forzados para garantizar compatibilidad 100% con Dark/Light Mode nativo.
-# Zoom de página al 90% (CSS `zoom`). En navegadores modernos (Chrome/Edge 2024+) convive con el
-# hover de Plotly; en versiones antiguas podía descolocar los tooltips. Si el hover fallara, usar
-# el zoom nativo del navegador (Ctrl + -) en su lugar.
+# NO usar `zoom` CSS: rompe el hover/tooltips de Plotly en este navegador. Para reducir el tamaño
+# de la página usar el zoom nativo del navegador (Ctrl + -), que conserva el hover.
 st.markdown("""
 <style>
 .stDataFrame { font-size: 12px; }
-.stApp { zoom: 0.9; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -431,10 +429,14 @@ with st.sidebar:
 
     st.divider()
     with st.expander("⚙️ Avanzado — Unidades y criterios"):
-        F_REF_N = st.number_input("Fuerza de referencia (N por unidad de carga)",
-                                  value=9810.0, step=10.0, format="%.0f",
-                                  help="SAP2000: 1 tonf = 1000 kgf = 9810 N. La FRF se normaliza por "
-                                       "esta carga unitaria de referencia.")
+        F_ref_kgf = st.number_input("Carga de referencia (kgf por unidad de carga)",
+                                    value=1000.0, step=10.0, format="%.0f",
+                                    help="SAP2000: 1 tonf = 1000 kgf. La FRF se normaliza por esta "
+                                         "carga unitaria de referencia. Internamente se convierte a "
+                                         "N (×9.81) para clasificar amplitudes, ya que F_op/F_rd "
+                                         "están en N.")
+        F_REF_N = F_ref_kgf * 9.81  # kgf → N (las fuerzas F_op/F_rd se ingresan en N)
+        st.caption(f"= {F_REF_N:.0f} N (1000 kgf = 9810 N = 1 tonf)")
         factor_despl = st.number_input("Factor de unidad de desplazamiento", value=10.0, step=1.0,
                                        format="%.2f", help="Convierte la salida de SAP a mm. cm→mm: ×10.")
         st.markdown("**Límites ISO 20816-3 (v_RMS, mm/s)**")
