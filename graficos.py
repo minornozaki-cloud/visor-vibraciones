@@ -372,9 +372,28 @@ with st.sidebar:
                                    [0.4, 1.0, 2.5, 6.3, 16.0, 40.0], index=3,
                                    help="G2.5: turbinas/compresores. G6.3: bombas y ventiladores "
                                         "(típico). G16: motores diésel/ejes de transmisión.")
+            with st.expander("ℹ️ ¿Qué grado G elegir? (ISO 1940-1)"):
+                st.markdown(
+                    "| G (mm/s) | Tipo de máquina (típico) |\n"
+                    "|---|---|\n"
+                    "| **G0.4** | Husillos, rectificadoras de precisión, giroscopios |\n"
+                    "| **G1.0** | Pequeñas armaduras eléctricas / accionamientos de precisión |\n"
+                    "| **G2.5** | Turbinas gas/vapor, turbogeneradores, turbocompresores, turbobombas, "
+                    "accionamientos de máquinas-herramienta |\n"
+                    "| **G6.3** | Maquinaria de proceso general, **tambores de centrífuga**, bombas, "
+                    "ventiladores, volantes, rodetes ← *típico para centrífugas* |\n"
+                    "| **G16** | Ejes de transmisión (cardán/hélice), trituradoras, maquinaria agrícola |\n"
+                    "| **G40** | Ruedas/llantas de auto, cigüeñales de diésel rápidos (6+ cil.) "
+                    "montados elásticamente |\n"
+                    "\n**Centrífugas / decanters:** el conjunto rotatorio es un *tambor de centrífuga* "
+                    "→ **G6.3** habitual; equipos de muy alta velocidad pueden ir a **G2.5**. Usa el "
+                    "grado del fabricante si lo especifica."
+                )
             omega = 2*math.pi*f_op
             U_gmm = (m_rotor * 1000.0 * G_grade / omega) if omega > 0 else 0.0
-            st.caption(f"U = m·1000·G/ω = **{U_gmm:,.1f} g·mm** (G{G_grade}, f_op = {f_op:.1f} Hz)")
+            e_mm = (G_grade / omega) if omega > 0 else 0.0  # excentricidad e = G/ω (mm)
+            st.caption(f"U = m·1000·G/ω = **{U_gmm:,.1f} g·mm** · excentricidad e = G/ω = "
+                       f"**{e_mm*1000:.1f} µm** ({e_mm:.4f} mm)  (G{G_grade}, f_op = {f_op:.1f} Hz)")
         else:
             U_gmm = st.number_input("Desbalance U = m·e (g·mm)", value=0.0, step=10.0, format="%.1f",
                                     help="U = desbalance del ROTOR en **g·mm** (estándar ISO 1940). "
