@@ -261,12 +261,17 @@ with st.sidebar:
     f_op_rpm = st.number_input("Frecuencia de operación (RPM)", value=2900.0, step=10.0, format="%.0f")
     f_op = f_op_rpm / 60.0
     st.caption(f"= {f_op:.2f} Hz (máxima del equipo)")
-    W_pata = st.number_input("Peso del equipo por apoyo (kgf)", value=0.0, step=100.0, format="%.0f",
-                             help="Peso estático por apoyo, en kgf (= masa en kg). Necesario para "
-                                  "calcular f_rd del aislador. Si lo dejas en 0, ingresa f_rd manual.")
     n_apoyos = st.number_input("N° de apoyos", value=4, min_value=1, step=1,
-                               help="Número de apoyos del equipo. Se usa para repartir la "
-                                    "fuerza total de desbalance entre los apoyos.")
+                               help="Número de apoyos del equipo. Reparte el peso total y la "
+                                    "fuerza de desbalance (modo Curva) entre los apoyos.")
+    W_total = st.number_input("Peso total del equipo (kgf)", value=0.0, step=100.0, format="%.0f",
+                              help="Peso estático TOTAL del equipo, en kgf (= masa en kg). El app lo "
+                                   "divide entre el N° de apoyos para obtener el peso por apoyo, que "
+                                   "se usa en f_rd. Si lo dejas en 0, ingresa f_rd manual.")
+    # Peso por apoyo (reparto uniforme) usado en el cálculo de f_rd
+    W_pata = W_total / max(int(n_apoyos), 1)
+    if W_total > 0:
+        st.caption(f"= **{W_pata:.0f} kgf por apoyo** (÷ {int(n_apoyos)} apoyos, reparto uniforme).")
 
     st.divider()
     st.markdown("**Cargas del fabricante (N, por apoyo)**")
@@ -310,7 +315,7 @@ with st.sidebar:
                        f"lateral: **{f_rd_L_calc:.2f} Hz**")
     else:
         f_rd_V_calc = f_rd_L_calc = None
-        st.caption("Ingresa el peso por apoyo para calcular f_rd automáticamente.")
+        st.caption("Ingresa el peso total del equipo para calcular f_rd automáticamente.")
     _help_frd = ("f_rd es la frecuencia del **modo de cuerpo rígido** del equipo sobre el "
                  "aislador:\n\n**f_rd = (1/2π)·√(K_din / m)**\n\n"
                  "con K_din = rigidez dinámica del aislador y m = masa por apoyo. Se calcula por "
@@ -495,7 +500,7 @@ with st.expander("❓ Glosario / FAQ — ¿Qué significa cada variable?"):
         "| **K_din** | Rigidez **dinámica** del aislador (N/mm). |\n"
         "| **K_est** | Rigidez **estática** del sistema en operación: K_est = F_ref / FRF_op. |\n"
         "| **RF = K_est/K_din** | Razón de rigidez (Hutchinson). Debe ser ≥ 10 para aislamiento efectivo. |\n"
-        "| **W_pata** | Peso estático por apoyo (kgf = masa en kg). |\n"
+        "| **Peso por apoyo** | Peso estático por apoyo = peso total ÷ N° de apoyos (kgf = masa en kg). Se usa en f_rd. |\n"
         "| **N° de apoyos** | Número de apoyos; reparte la fuerza total de desbalance por apoyo. |\n"
         "\n"
         "#### Clasificación de amplitudes\n"
