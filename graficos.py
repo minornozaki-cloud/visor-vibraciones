@@ -218,7 +218,9 @@ def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, yli
             continue
         ax.plot(f_cpm, A, marker=mk, ms=9, color=col_,
                 markeredgecolor='black', markeredgewidth=1.0, ls='none', zorder=5)
-        ax.annotate(lbl, (f_cpm, A), fontsize=6, xytext=(4, 3), textcoords='offset points')
+        if lbl:
+            ax.annotate(lbl, (f_cpm, A), fontsize=7, fontweight='bold',
+                        xytext=(5, 3), textcoords='offset points', zorder=6)
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlim(100, 10000); ax.set_ylim(*ylim)
     ax.set_xlabel('Frecuencia (cpm)', fontsize=9)
@@ -1192,27 +1194,76 @@ with tab_class:
             )
 
         # Control de alto para las gráficas de amplitudes
-        alto_graf = st.slider("Alto de las gráficas de amplitudes (px)",
-                              min_value=400, max_value=1600, value=850, step=50)
+        cgrf1, cgrf2 = st.columns([2, 1])
+        with cgrf1:
+            alto_graf = st.slider("Alto de las gráficas de amplitudes (px)",
+                                  min_value=400, max_value=1600, value=850, step=50)
+        with cgrf2:
+            n_label = st.number_input(
+                "N° de nodos a etiquetar (más desfavorables)",
+                min_value=0, max_value=50, value=5, step=1,
+                help="En operación casi todos los nodos caen a la misma frecuencia y se "
+                     "apilan. Para no saturar, solo se rotulan en las gráficas los N nodos "
+                     "de **mayor amplitud** (los más desfavorables); el resto quedan como "
+                     "puntos (visibles al pasar el mouse). La tabla de abajo los lista como "
+                     "nodos escritos. 0 = no rotular ninguno.")
 
-        # Puntos (Op ○ / Tr △) para las descargas en alta calidad (matplotlib),
+        # ── Lista unificada de puntos de clasificación (mismas amplitudes que las
+        # tablas ①②③). Sirve para: (a) elegir los N más desfavorables a rotular,
+        # (b) la tabla de nodos críticos, (c) las descargas matplotlib. ───────────
+        _pts_cl = []
+        if modo_cond in ["Operación", "Todas"]:
+            for rr in rows_op:
+                _pts_cl.append({'caso': rr['Caso'], 'joint': rr['Joint'], 'dir': rr['Dir'],
+                                'cond': 'Op', 'mk': 'o', 'f': rr['f_op (Hz)'],
+                                'A': rr['A_op (mm)'], 'Richart': rr['Richart'],
+                                'Blake': rr['Blake'], 'ISO': rr['ISO']})
+        if modo_cond in ["Transitorio", "Todas"]:
+            for rr in rows_tr:
+                _pts_cl.append({'caso': rr['Caso'], 'joint': rr['Joint'], 'dir': rr['Dir'],
+                                'cond': 'Tr', 'mk': '^', 'f': rr['f_peor (Hz)'],
+                                'A': rr['A_peor (mm)'], 'Richart': rr['Richart'],
+                                'Blake': rr['Blake'], 'ISO': rr['ISO']})
+        if modo_cond in ["Peak zona excl.", "Todas"]:
+            for rr in rows_pk:
+                _pts_cl.append({'caso': rr['Caso'], 'joint': rr['Joint'], 'dir': rr['Dir'],
+                                'cond': 'Peak', 'mk': 'x', 'f': rr['f_peak (Hz)'],
+                                'A': rr['A_peak (mm)'], 'Richart': rr['Richart'],
+                                'Blake': rr['Blake'], 'ISO': rr['ISO']})
+
+        # Los N más desfavorables = mayor amplitud (criterio único; en operación
+        # todos caen a la misma f, así que el orden lo fija la amplitud).
+        _pts_validos = [p for p in _pts_cl
+                        if p['A'] is not None and np.isfinite(p['A']) and p['A'] > 0]
+        _pts_orden = sorted(_pts_validos, key=lambda p: p['A'], reverse=True)
+        _top_pts = _pts_orden[:int(n_label)]
+        top_keys = {(p['caso'], p['joint'], p['dir'], p['cond']) for p in _top_pts}
+        top_joints = {p['joint'] for p in _top_pts}  # para el reporte Word (por nombre)
+
+        # Tabla lateral: los N nodos más desfavorables, escritos.
+        if _top_pts and n_label > 0:
+            df_top = pd.DataFrame([{
+                'Nodo': p['joint'], 'Dir': p['dir'], 'Condición': p['cond'],
+                'f (Hz)': round(p['f'], 2), 'Amplitud (mm)': round(p['A'], 5),
+                'Richart': p['Richart'], 'Blake': p['Blake'], 'ISO': p['ISO'],
+            } for p in _top_pts])
+            st.markdown(f"**🔺 {len(df_top)} nodos más desfavorables (mayor amplitud)** "
+                        f"— ● Op · ▲ Tr · ✖ Peak")
+            st.dataframe(df_top.style.map(color_class, subset=['Richart', 'Blake', 'ISO']),
+                         use_container_width=True, hide_index=True)
+
+        # Puntos (Op ○ / Tr △ / Peak ✖) para las descargas en alta calidad (matplotlib),
         # idénticos a los del reporte; respetan el selector "Condición a graficar".
+        # Solo los N más desfavorables llevan etiqueta (el resto: cadena vacía).
         _joints_all = sorted(set(j for (_, j) in resultados.keys()))
         def _hex_joint_app(j):
             return '#%02x%02x%02x' % tuple(int(x*255) for x in color_joint(_joints_all, j)[:3])
+        def _lbl_top(p):
+            return str(p['joint']) if (p['caso'], p['joint'], p['dir'], p['cond']) in top_keys else ""
         puntos_cl_app = []
-        if modo_cond in ["Operación", "Todas"]:
-            for rr in rows_op:
-                puntos_cl_app.append((f_op*60, rr['A_op (mm)'], str(rr['Joint']),
-                                      _hex_joint_app(rr['Joint']), 'o'))
-        if modo_cond in ["Transitorio", "Todas"]:
-            for rr in rows_tr:
-                puntos_cl_app.append((rr['f_peor (Hz)']*60, rr['A_peor (mm)'], str(rr['Joint']),
-                                      _hex_joint_app(rr['Joint']), '^'))
-        if modo_cond in ["Peak zona excl.", "Todas"]:
-            for rr in rows_pk:
-                puntos_cl_app.append((rr['f_peak (Hz)']*60, rr['A_peak (mm)'], str(rr['Joint']),
-                                      _hex_joint_app(rr['Joint']), 'x'))
+        for p in _pts_cl:
+            puntos_cl_app.append((p['f']*60, p['A'], _lbl_top(p),
+                                  _hex_joint_app(p['joint']), p['mk']))
 
         def descarga_png_mpl(fig, nombre, etiqueta):
             """Exporta una figura matplotlib (misma calidad que el reporte) como PNG."""
@@ -1323,9 +1374,13 @@ with tab_class:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
                 if key_ not in plotted and u_val > 0:
                     plotted.add(key_)
+                    _es_top = (caso, joint, dir_lbl, cond_lbl) in top_keys
                     fig_rich.add_trace(go.Scatter(
                         x=[f_val*60], y=[u_val],
-                        mode='markers',
+                        mode='markers+text' if _es_top else 'markers',
+                        text=[joint] if _es_top else None,
+                        textposition="middle right",
+                        textfont=dict(size=11, color="black"),
                         name=f"{joint} {dir_lbl} {cond_lbl}",
                         marker=dict(symbol=sym, size=10, color=col_,
                                     line=dict(width=1.5, color="black")),
@@ -1420,9 +1475,13 @@ with tab_class:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
                 if key_ not in plotted_blake and u_val > 0:
                     plotted_blake.add(key_)
+                    _es_top = (caso, joint, dir_lbl, cond_lbl) in top_keys
                     fig_blake.add_trace(go.Scatter(
                         x=[f_val*60], y=[u_val],
-                        mode='markers',
+                        mode='markers+text' if _es_top else 'markers',
+                        text=[joint] if _es_top else None,
+                        textposition="middle right",
+                        textfont=dict(size=11, color="black"),
                         name=f"{joint} {dir_lbl} {cond_lbl}",
                         marker=dict(symbol=sym, size=10, color=col_,
                                     line=dict(width=1.5, color="black")),
@@ -1842,10 +1901,12 @@ with tab_report:
                     puntos_cl = []
                     for _, row in df_cl_r.iterrows():
                         col_j = _hex_joint(row['Joint'])
+                        # Solo se rotulan los nodos más desfavorables (top-N); el resto vacío.
+                        lbl_j = str(row['Joint']) if row['Joint'] in top_joints else ""
                         if modo_cond in ["Operación", "Ambas"]:
-                            puntos_cl.append((f_op*60, row['A_op (mm)'], str(row['Joint']), col_j, 'o'))
+                            puntos_cl.append((f_op*60, row['A_op (mm)'], lbl_j, col_j, 'o'))
                         if modo_cond in ["Transitorio", "Ambas"]:
-                            puntos_cl.append((row['f_rd (Hz)']*60, row['A_rd (mm)'], str(row['Joint']), col_j, '^'))
+                            puntos_cl.append((row['f_rd (Hz)']*60, row['A_rd (mm)'], lbl_j, col_j, '^'))
 
                     cap_pts = ("Marcadores: ○ = operación (f_op), △ = transitorio (peor caso del "
                                "tramo). Banda naranja = zona de exclusión; línea roja = f_op.")
