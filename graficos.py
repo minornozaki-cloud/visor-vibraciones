@@ -796,6 +796,112 @@ def color_joint(joints_list, joint):
     idx = sorted(set(joints_list)).index(joint) % len(PALETA)
     return PALETA[idx]
 
+
+def _fan_subplot_plotly(fig, items, row, col):
+    """Rotula en abanico (con flecha guía) una lista de puntos dentro de un
+    subplot Plotly de ejes lineales (FRF/Fase), evitando que las etiquetas se
+    solapen. items = [(x, y, texto), ...] ya ordenado por relevancia."""
+    n = len(items)
+    for i, (x, y, txt) in enumerate(items):
+        fig.add_annotation(
+            x=x, y=y, text=txt, row=row, col=col, showarrow=True,
+            arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor="#444",
+            ax=38, ay=(i - (n - 1) / 2.0) * 24,
+            xanchor="left", yanchor="middle",
+            font=dict(size=10, color="black"),
+            bgcolor="rgba(255,255,255,0.78)", borderpad=2,
+        )
+
+
+def _descarga_png(fig, nombre, etiqueta, key):
+    """Exporta una figura matplotlib como PNG de alta calidad (botón de descarga)."""
+    b = io.BytesIO()
+    fig.savefig(b, format='png', dpi=200, bbox_inches='tight')
+    b.seek(0); plt.close(fig)
+    st.download_button(etiqueta, b, file_name=nombre, mime="image/png", key=key)
+
+
+def _fan_labels_mpl(ax, items):
+    """Etiquetas en abanico vertical con línea guía en un eje matplotlib.
+    items = [(x, y, texto), ...] ya ordenado por relevancia."""
+    n = len(items)
+    for i, (x, y, txt) in enumerate(items):
+        ax.annotate(txt, (x, y), fontsize=7.5, fontweight='bold',
+                    xytext=(26, (i - (n - 1) / 2.0) * 22), textcoords='offset points',
+                    ha='left', va='center', zorder=6,
+                    arrowprops=dict(arrowstyle='-', lw=0.6, color='#444',
+                                    shrinkA=0, shrinkB=3))
+
+
+def fig_frf_mpl(resultados, casos, joints, f_excl_lo, f_excl_hi, f_op, df_raw, n_cols, top_n):
+    """FRF |U| por caso en matplotlib (descarga alta calidad), con etiquetas top-N."""
+    rows = math.ceil(len(casos) / n_cols)
+    fig, axes = plt.subplots(rows, n_cols, figsize=(6*n_cols, 4*rows), squeeze=False)
+    fmin = df_raw['Freq'].min()*0.95 if not df_raw.empty else 30
+    fmax = df_raw['Freq'].max()*1.05 if not df_raw.empty else 80
+    for ci, caso in enumerate(casos):
+        ax = axes[ci//n_cols][ci % n_cols]
+        grupo = {k: v for k, v in resultados.items() if k[0] == caso}
+        peaks = []
+        for (c, joint), r in grupo.items():
+            col = color_joint(joints, joint)[:3]
+            ax.plot(r['freqs'], r['frf_mm'], color=col, lw=1.6, label=joint)
+            ax.plot(r['f_pk'], r['frf_pk'], 'o', color=col, ms=5,
+                    markeredgecolor='black', markeredgewidth=0.6, zorder=5)
+            peaks.append((r['f_pk'], r['frf_pk'], joint))
+        ax.axvspan(f_excl_lo, f_excl_hi, color='orange', alpha=0.15)
+        ax.axvline(f_op, color='red', ls='--', lw=1.2, alpha=0.7)
+        peaks.sort(key=lambda t: t[1], reverse=True)
+        _fan_labels_mpl(ax, peaks[:top_n])
+        ax.set_title(caso, fontsize=10, fontweight='bold')
+        ax.set_xlabel('Frecuencia (Hz)', fontsize=9)
+        ax.set_ylabel('|U| (mm/Ton)', fontsize=9)
+        ax.grid(True, alpha=0.25, ls='--')
+        ax.legend(fontsize=6.5, ncol=2)
+        ax.set_xlim(fmin, fmax); ax.set_ylim(bottom=0)
+    for j in range(len(casos), rows*n_cols):
+        axes[j//n_cols][j % n_cols].axis('off')
+    fig.suptitle('FRF |U| — Desplazamiento por unidad de fuerza (mm/Ton)',
+                 fontsize=12, fontweight='bold')
+    fig.tight_layout()
+    return fig
+
+
+def fig_fase_mpl(resultados, casos, joints, f_excl_lo, f_excl_hi, f_op, df_raw, n_cols, top_n):
+    """Ángulo de fase φ por caso en matplotlib (descarga alta calidad), top-N
+    etiquetados por cercanía a ±90° (criterio de resonancia)."""
+    rows = math.ceil(len(casos) / n_cols)
+    fig, axes = plt.subplots(rows, n_cols, figsize=(6*n_cols, 4*rows), squeeze=False)
+    for ci, caso in enumerate(casos):
+        ax = axes[ci//n_cols][ci % n_cols]
+        grupo = {k: v for k, v in resultados.items() if k[0] == caso}
+        marcas = []
+        for (c, joint), r in grupo.items():
+            col = color_joint(joints, joint)[:3]
+            ax.plot(r['freqs'], r['fase_deg'], color=col, lw=1.6, label=joint)
+            ax.plot(r['f_pk'], r['fase_pk'], 'o', color=col, ms=5,
+                    markeredgecolor='black', markeredgewidth=0.6, zorder=5)
+            marcas.append((r['f_pk'], r['fase_pk'], f"{joint} {r['fase_pk']:.0f}°",
+                           abs(90 - abs(r['fase_pk']))))
+        ax.axvspan(f_excl_lo, f_excl_hi, color='orange', alpha=0.15)
+        ax.axvline(f_op, color='red', ls='--', lw=1.2, alpha=0.7)
+        for yref in (-90, 90):
+            ax.axhline(yref, color='purple', ls=':', lw=1.0, alpha=0.6)
+        marcas.sort(key=lambda t: t[3])  # más cerca de ±90° primero
+        _fan_labels_mpl(ax, [(x, y, t) for (x, y, t, _) in marcas[:top_n]])
+        ax.set_title(caso, fontsize=10, fontweight='bold')
+        ax.set_xlabel('Frecuencia (Hz)', fontsize=9)
+        ax.set_ylabel('φ (°)', fontsize=9)
+        ax.set_ylim(-220, 220)
+        ax.grid(True, alpha=0.25, ls='--')
+        ax.legend(fontsize=6.5, ncol=2)
+    for j in range(len(casos), rows*n_cols):
+        axes[j//n_cols][j % n_cols].axis('off')
+    fig.suptitle('Ángulo de fase φ — Líneas ±90° = criterio de resonancia',
+                 fontsize=12, fontweight='bold')
+    fig.tight_layout()
+    return fig
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: FRF — AMPLITUD
 # ══════════════════════════════════════════════════════════════════════════════
@@ -807,13 +913,20 @@ with tab_frf:
         casos_uniq = sorted(set(r['caso'] for r in resultados.values()))
         joints_uniq = sorted(set(r['joint'] for r in resultados.values()))
 
-        cfg1, cfg2 = st.columns(2)
+        cfg1, cfg2, cfg3 = st.columns(3)
         with cfg1:
             n_cols = st.slider("Columnas por fila", 1, 3, min(len(casos_uniq), 3))
         with cfg2:
             alto_fila_frf = st.slider("Alto por fila (px)", 250, 800, 380, 10,
                                       help="Controla la altura vertical de cada fila de "
                                            "subgráficos FRF — Amplitud.")
+        with cfg3:
+            n_lab_frf = st.number_input(
+                "N° de curvas a etiquetar", min_value=0, max_value=30, value=5, step=1,
+                key="n_lab_frf",
+                help="Por cada caso se rotulan, en abanico con flecha guía, los N nodos "
+                     "de **mayor amplitud de pico** (FRF peak). El resto quedan sin rótulo "
+                     "(visibles al pasar el mouse o en la leyenda). 0 = no rotular.")
         fig_frf = make_subplots(
             rows=math.ceil(len(casos_uniq)/n_cols), cols=n_cols,
             subplot_titles=casos_uniq, shared_yaxes=False
@@ -822,6 +935,7 @@ with tab_frf:
         for ci, caso in enumerate(casos_uniq):
             row_p = ci // n_cols + 1; col_p = ci % n_cols + 1
             grupo = {k: v for k, v in resultados.items() if k[0] == caso}
+            peaks_frf = []
             for (c, joint), r in grupo.items():
                 col_hex = '#%02x%02x%02x' % tuple(
                     int(x*255) for x in color_joint(joints_uniq, joint)[:3])
@@ -840,6 +954,7 @@ with tab_frf:
                     marker=dict(color=col_hex, size=8, symbol='circle'),
                     hovertemplate=f"<b>{joint} peak</b><br>f={r['f_pk']:.1f} Hz<br>{r['frf_pk']:.4f} mm/T<extra></extra>"
                 ), row=row_p, col=col_p)
+                peaks_frf.append((r['f_pk'], r['frf_pk'], joint))
 
             # Zona de exclusión
             fig_frf.add_vrect(
@@ -851,6 +966,9 @@ with tab_frf:
                 x=f_op, line_dash="dash", line_color="red", opacity=0.7,
                 row=row_p, col=col_p
             )
+            # Etiquetas top-N (mayor FRF peak) en abanico con flecha guía
+            peaks_frf.sort(key=lambda t: t[1], reverse=True)
+            _fan_subplot_plotly(fig_frf, peaks_frf[:int(n_lab_frf)], row_p, col_p)
 
         fig_frf.update_layout(
             height=alto_fila_frf*math.ceil(len(casos_uniq)/n_cols),
@@ -865,6 +983,11 @@ with tab_frf:
         ])
         fig_frf.update_yaxes(title_text="|U| (mm/Ton)", rangemode="tozero")
         st.plotly_chart(fig_frf, use_container_width=True)
+        _descarga_png(
+            fig_frf_mpl(resultados, casos_uniq, joints_uniq, f_excl_lo, f_excl_hi,
+                        f_op, df_raw, n_cols, int(n_lab_frf)),
+            "FRF_Amplitud.png", "⬇️ Descargar FRF — Amplitud (PNG alta calidad)",
+            key="dl_frf")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: ANÁLISIS DE FASE
@@ -876,7 +999,23 @@ with tab_fase:
     else:
         casos_uniq = sorted(set(r['caso'] for r in resultados.values()))
         joints_uniq = sorted(set(r['joint'] for r in resultados.values()))
-        n_cols = min(len(casos_uniq), 3)
+
+        cfa1, cfa2, cfa3 = st.columns(3)
+        with cfa1:
+            n_cols = st.slider("Columnas por fila", 1, 3, min(len(casos_uniq), 3),
+                               key="ncols_fase")
+        with cfa2:
+            alto_fila_fase = st.slider("Alto por fila (px)", 250, 800, 380, 10,
+                                       key="alto_fase",
+                                       help="Controla la altura vertical de cada fila de "
+                                            "subgráficos de fase.")
+        with cfa3:
+            n_lab_fase = st.number_input(
+                "N° de curvas a etiquetar", min_value=0, max_value=30, value=5, step=1,
+                key="n_lab_fase",
+                help="Por cada caso se rotulan, en abanico con flecha guía, los N nodos "
+                     "cuyo ángulo de fase en el pico está **más cerca de ±90°** (criterio "
+                     "de resonancia). El resto quedan sin rótulo. 0 = no rotular.")
 
         fig_fase = make_subplots(
             rows=math.ceil(len(casos_uniq)/n_cols), cols=n_cols,
@@ -885,6 +1024,7 @@ with tab_fase:
         for ci, caso in enumerate(casos_uniq):
             row_p = ci // n_cols + 1; col_p = ci % n_cols + 1
             grupo = {k: v for k, v in resultados.items() if k[0] == caso}
+            marcas_fase = []
             for (c, joint), r in grupo.items():
                 col_hex = '#%02x%02x%02x' % tuple(
                     int(x*255) for x in color_joint(joints_uniq, joint)[:3])
@@ -898,13 +1038,13 @@ with tab_fase:
                 ), row=row_p, col=col_p)
                 fig_fase.add_trace(go.Scatter(
                     x=[r['f_pk']], y=[r['fase_pk']],
-                    mode='markers+text',
-                    text=[f"{r['fase_pk']:.0f}°"],
-                    textposition="top right",
-                    showlegend=False,
+                    mode='markers', showlegend=False,
                     marker=dict(color=col_hex, size=8),
-                    textfont=dict(size=9, color=col_hex)
+                    hovertemplate=(f"<b>{joint} peak</b><br>f={r['f_pk']:.1f} Hz<br>"
+                                   f"φ={r['fase_pk']:.1f}°<extra></extra>")
                 ), row=row_p, col=col_p)
+                marcas_fase.append((r['f_pk'], r['fase_pk'], f"{joint} {r['fase_pk']:.0f}°",
+                                    abs(90 - abs(r['fase_pk']))))
 
             fig_fase.add_vrect(
                 x0=f_excl_lo, x1=f_excl_hi,
@@ -915,9 +1055,13 @@ with tab_fase:
             for y_ref in [-90, 90]:
                 fig_fase.add_hline(y=y_ref, line_dash="dot", line_color="purple",
                                    opacity=0.6, row=row_p, col=col_p)
+            # Etiquetas top-N (más cerca de ±90°) en abanico con flecha guía
+            marcas_fase.sort(key=lambda t: t[3])
+            _fan_subplot_plotly(fig_fase, [(x, y, t) for (x, y, t, _) in marcas_fase[:int(n_lab_fase)]],
+                                row_p, col_p)
 
         fig_fase.update_layout(
-            height=380*math.ceil(len(casos_uniq)/n_cols),
+            height=alto_fila_fase*math.ceil(len(casos_uniq)/n_cols),
             title_text="Ángulo de fase φ — Líneas ±90° = criterio de resonancia",
             legend=dict(orientation="h", yanchor="bottom", y=-0.15),
             font=dict(family="Arial"),
@@ -925,6 +1069,11 @@ with tab_fase:
         fig_fase.update_yaxes(range=[-220, 220], title_text="φ (°)")
         fig_fase.update_xaxes(title_text="Frecuencia (Hz)")
         st.plotly_chart(fig_fase, use_container_width=True)
+        _descarga_png(
+            fig_fase_mpl(resultados, casos_uniq, joints_uniq, f_excl_lo, f_excl_hi,
+                         f_op, df_raw, n_cols, int(n_lab_fase)),
+            "Angulo_de_fase.png", "⬇️ Descargar Ángulo de fase (PNG alta calidad)",
+            key="dl_fase")
 
         # Tabla diagnóstico
         st.subheader("Resumen de Diagnóstico de Resonancia")
