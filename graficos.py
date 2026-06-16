@@ -202,6 +202,26 @@ def transitorio_en_frd(r, F_rd_cal, modo_fuerza, U_gmm, F_REF, n_apoyos=1):
     return h * F / F_REF, f_used, F, en_rango
 
 
+def _anotar_top_plotly(fig, top_pts):
+    """Rotula los nodos top-N en un gráfico Plotly log-log (Richart/Blake) con
+    etiquetas en abanico vertical a la derecha + flecha guía, para que no se
+    solapen cuando varios nodos caen casi en la misma frecuencia.
+    OJO: en ejes type='log' las coordenadas de la anotación van como log10(valor)."""
+    pts = [p for p in top_pts
+           if p.get('A') is not None and np.isfinite(p['A']) and p['A'] > 0]
+    n = len(pts)
+    for i, p in enumerate(pts):
+        fig.add_annotation(
+            x=math.log10(p['f']*60), y=math.log10(p['A']),
+            text=str(p['joint']), showarrow=True,
+            arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor="#444",
+            ax=70, ay=(i - (n - 1) / 2.0) * 32,
+            xanchor="left", yanchor="middle",
+            font=dict(size=11, color="black"),
+            bgcolor="rgba(255,255,255,0.78)", borderpad=2,
+        )
+
+
 def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, ylim):
     """Diagrama log-log de clasificación (Richart/Blake) en matplotlib, para el Word.
     - lines: {label: {'x':[cpm], 'y':[mm], 'col':hex, 'dash':'solid'|'dash'}}
@@ -213,14 +233,25 @@ def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, yli
                 ls='--' if d.get('dash') == 'dash' else '-', label=lbl)
     ax.axvspan(f_excl_lo*60, f_excl_hi*60, color='orange', alpha=0.15)
     ax.axvline(f_op*60, color='red', ls='--', lw=1.3, alpha=0.8)
+    labeled = []
     for f_cpm, A, lbl, col_, mk in puntos:
         if A is None or not np.isfinite(A) or A <= 0:
             continue
         ax.plot(f_cpm, A, marker=mk, ms=9, color=col_,
                 markeredgecolor='black', markeredgewidth=1.0, ls='none', zorder=5)
         if lbl:
-            ax.annotate(lbl, (f_cpm, A), fontsize=7, fontweight='bold',
-                        xytext=(5, 3), textcoords='offset points', zorder=6)
+            labeled.append((f_cpm, A, lbl))
+    # Etiquetas en abanico a la derecha, con línea guía, para no solaparse cuando
+    # varios nodos caen casi en la misma frecuencia.
+    labeled.sort(key=lambda t: t[1], reverse=True)
+    n_lab = len(labeled)
+    for i, (f_cpm, A, lbl) in enumerate(labeled):
+        dy = (i - (n_lab - 1) / 2.0) * 26
+        ax.annotate(lbl, (f_cpm, A), fontsize=7.5, fontweight='bold',
+                    xytext=(34, dy), textcoords='offset points',
+                    ha='left', va='center', zorder=6,
+                    arrowprops=dict(arrowstyle='-', lw=0.6, color='#444',
+                                    shrinkA=0, shrinkB=3))
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlim(100, 10000); ax.set_ylim(*ylim)
     ax.set_xlabel('Frecuencia (cpm)', fontsize=9)
@@ -1374,13 +1405,9 @@ with tab_class:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
                 if key_ not in plotted and u_val > 0:
                     plotted.add(key_)
-                    _es_top = (caso, joint, dir_lbl, cond_lbl) in top_keys
                     fig_rich.add_trace(go.Scatter(
                         x=[f_val*60], y=[u_val],
-                        mode='markers+text' if _es_top else 'markers',
-                        text=[joint] if _es_top else None,
-                        textposition="middle right",
-                        textfont=dict(size=11, color="black"),
+                        mode='markers',
                         name=f"{joint} {dir_lbl} {cond_lbl}",
                         marker=dict(symbol=sym, size=10, color=col_,
                                     line=dict(width=1.5, color="black")),
@@ -1390,6 +1417,7 @@ with tab_class:
                             f"f = {f_val:.1f} Hz ({f_val*60:.0f} cpm)<br>"
                             f"A = {u_val:.5f} mm<extra></extra>")
                     ))
+        _anotar_top_plotly(fig_rich, _top_pts)
 
         fig_rich.add_vrect(x0=f_excl_lo*60, x1=f_excl_hi*60,
                            fillcolor="orange", opacity=0.15, line_width=0)
@@ -1475,13 +1503,9 @@ with tab_class:
                 key_ = f"{caso}_{joint}_{cond_lbl}"
                 if key_ not in plotted_blake and u_val > 0:
                     plotted_blake.add(key_)
-                    _es_top = (caso, joint, dir_lbl, cond_lbl) in top_keys
                     fig_blake.add_trace(go.Scatter(
                         x=[f_val*60], y=[u_val],
-                        mode='markers+text' if _es_top else 'markers',
-                        text=[joint] if _es_top else None,
-                        textposition="middle right",
-                        textfont=dict(size=11, color="black"),
+                        mode='markers',
                         name=f"{joint} {dir_lbl} {cond_lbl}",
                         marker=dict(symbol=sym, size=10, color=col_,
                                     line=dict(width=1.5, color="black")),
@@ -1491,6 +1515,7 @@ with tab_class:
                             f"f = {f_val:.1f} Hz ({f_val*60:.0f} cpm)<br>"
                             f"A = {u_val:.5f} mm<extra></extra>")
                     ))
+        _anotar_top_plotly(fig_blake, _top_pts)
 
         fig_blake.add_vrect(x0=f_excl_lo*60, x1=f_excl_hi*60,
                             fillcolor="orange", opacity=0.15, line_width=0)
