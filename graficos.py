@@ -146,12 +146,15 @@ def auto_dir(caso):
     if '_Z' in caso_u or caso_u.endswith('Z'): return ('U3', 'Z')
     return ('U1', str(caso))
 
-def _fuerza_tr(modo_fuerza, f_arr, F_rd_cal, U_gmm, n_apoyos):
+def _fuerza_tr(modo_fuerza, f_arr, F_rd_cal, U_gmm, n_apoyos, f_op=None):
     """Fuerza dinámica del transitorio en cada frecuencia [N].
-    - Valor fijo:      F_rd del fabricante, constante (ya viene por apoyo).
-    - Curva desbalance: F=m·e·ω² (TOTAL del rotor) repartido entre n_apoyos."""
+    - Valor fijo:        F_rd del fabricante, constante (ya viene por apoyo).
+    - Curva desbalance:  F=m·e·ω² (TOTAL del rotor) repartido entre n_apoyos.
+    - Fabricante F∝1/f: F(f) = F_op_ref × (f_op / f); requiere f_op [Hz]."""
     if modo_fuerza.startswith("Curva"):
         return (U_gmm / 1e6) * (2 * np.pi * f_arr) ** 2 / max(int(n_apoyos), 1)
+    if modo_fuerza.startswith("Fabricante") and f_op is not None:
+        return float(F_rd_cal) * (float(f_op) / np.asarray(f_arr, float))
     return np.full(np.asarray(f_arr, float).shape, float(F_rd_cal))
 
 
@@ -379,8 +382,10 @@ with st.sidebar:
     else:
         st.caption(f"f_rd en uso — vertical: **{f_rd_V:.2f} Hz** · lateral: **{f_rd_L:.2f} Hz**")
 
-    modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria",
-                                  ["Valor fijo: F(f) = F_rd", "Curva desbalance: F(f) = m·e·ω²"],
+    modo_fuerza_tr = st.selectbox("Modelo de fuerza transitoria / peaks",
+                                  ["Valor fijo: F(f) = F_rd",
+                                   "Curva desbalance: F(f) = m·e·ω²",
+                                   "Fabricante F∝1/f: F(f) = F_op·f_op/f"],
                                   help="**Valor fijo (F_rd)**: fuerza dinámica **constante** que "
                                        "se considera para efectos prácticos en la condición "
                                        "transitoria (partida/parada), como en los casos revisados "
@@ -388,7 +393,13 @@ with st.sidebar:
                                        "ventana del barrido.\n\n"
                                        "**Curva desbalance**: F(f) = m·e·ω², con ω = 2·π·f, así que "
                                        "la fuerza varía con f²; mínima en f_rd y máxima cerca de "
-                                       "operación. Sólo aplica a equipos centrífugos / rotativos.")
+                                       "operación. Sólo aplica a equipos centrífugos / rotativos.\n\n"
+                                       "**Fabricante F∝1/f**: modelo del fabricante para la condición "
+                                       "③ (peaks). La fuerza es **inversamente proporcional a la "
+                                       "frecuencia**: F(f) = F_op × (f_op / f). Aplica cuando el "
+                                       "fabricante limita las cargas mediante una alarma de velocidad "
+                                       "de vibración constante (ej. 30 mm/s RMS): a menor RPM, mayor "
+                                       "fuerza dinámica. En la condición transitoria usa F_rd constante.")
     if modo_fuerza_tr.startswith("Curva"):
         st.info("**Modelo de desbalance rotativo:**\n\n"
                 "**F(f) = m·e·ω²**,  con  **ω = 2·π·f**\n\n"
@@ -447,6 +458,17 @@ with st.sidebar:
         st.caption("Ref.: ISO 1940-1; Arya, O'Neill & Pincus (1979); Den Hartog, *Mechanical "
                    "Vibrations*. **Definición referencial** — reemplazar por la curva "
                    "fuerza–frecuencia del fabricante cuando esté disponible.")
+    elif modo_fuerza_tr.startswith("Fabricante"):
+        st.info("**Modelo del fabricante — fuerza inversamente proporcional a RPM:**\n\n"
+                "**F(f) = F_op × (f_op / f)**\n\n"
+                "→ A menor frecuencia (RPM), **mayor fuerza dinámica**. Aplica cuando el "
+                "fabricante limita las cargas dinámicas mediante una alarma de velocidad de "
+                "vibración constante (v_RMS constante ≈ 30 mm/s): si la velocidad es constante, "
+                "entonces F ∝ 1/f (la amplitud A = v/(2πf) sube a menor frecuencia).\n\n"
+                "**Solo aplica a condición ③ (peaks en zona de exclusión).** Para la condición "
+                "② (transitorio) se usa F_rd constante (valor fijo del fabricante).",
+                icon="ℹ️")
+        U_gmm = 0.0
     else:
         U_gmm = 0.0
 
@@ -1228,7 +1250,7 @@ with tab_class:
             # frecuencia), por lo que la fuerza es F(f_peak), no F_op. En modo desbalance
             # F∝f² (distinta a F_op); en modo valor fijo es constante (= F_op_cal).
             F_pk  = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
-                                     F_op_cal, U_gmm, n_apoyos)[0])
+                                     F_op_cal, U_gmm, n_apoyos, f_op)[0])
             u_pk  = r['frf_pk'] * F_pk / F_REF_N
             vp_pk = v_peak(u_pk, r['f_pk']); vr_pk = v_rms(u_pk, r['f_pk'])
             rows_pk.append({
@@ -1317,6 +1339,12 @@ with tab_class:
                        "lo que la fuerza es F(f_peak) — no F_op. Evalúa la severidad si una "
                        "resonancia estructural cae cerca de la operación (ver columnas Fase / En "
                        "zona / Diagnóstico).")
+        elif modo_fuerza_tr.startswith("Fabricante"):
+            st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
+                       f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado con la fuerza del **modelo "
+                       f"del fabricante**: `F(f_peak) = F_op × (f_op / f_peak)` = "
+                       f"F_op × ({f_op:.2f} / f_peak). La fuerza es **mayor a menor RPM** (F∝1/f): "
+                       f"si el peak está por debajo de f_op = {f_op:.2f} Hz, la fuerza excedería F_op.")
         else:
             st.caption(f"Peak estructural de |H| dentro de la zona de exclusión "
                        f"[{f_excl_lo:.1f}–{f_excl_hi:.1f} Hz], excitado por la fuerza **evaluada en "
@@ -1546,7 +1574,7 @@ with tab_class:
                 puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
             if modo_cond in ["Peak zona excl.", "Todas"]:
                 F_pk_g = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
-                                          F_op_cal, U_gmm, n_apoyos)[0])
+                                          F_op_cal, U_gmm, n_apoyos, f_op)[0])
                 u_pk_g = r['frf_pk'] * F_pk_g / F_REF_N
                 puntos_a_graficar.append((u_pk_g, r['f_pk'], "Peak", "x"))
 
@@ -1644,7 +1672,7 @@ with tab_class:
                 puntos_a_graficar.append((u_rd, f_rd_eff, "Tr", "triangle-up"))
             if modo_cond in ["Peak zona excl.", "Todas"]:
                 F_pk_g = float(_fuerza_tr(modo_fuerza_tr, np.array([r['f_pk']]),
-                                          F_op_cal, U_gmm, n_apoyos)[0])
+                                          F_op_cal, U_gmm, n_apoyos, f_op)[0])
                 u_pk_g = r['frf_pk'] * F_pk_g / F_REF_N
                 puntos_a_graficar.append((u_pk_g, r['f_pk'], "Peak", "x"))
 
@@ -2009,6 +2037,14 @@ with tab_report:
                              "barrido: es mínima en el cruce del aislador (f_rd, baja frecuencia) y "
                              "máxima cerca de operación. El peor caso del transitorio tiende, por tanto, "
                              "a ubicarse en la zona alta del barrido y no en f_rd.")
+                elif modo_fuerza_tr.startswith("Fabricante"):
+                    add_para("Nota — modelo del fabricante F∝1/f para peaks (condición ③): la fuerza "
+                             f"dinámica aplicada al peak estructural es F(f_peak) = F_op × (f_op / f_peak), "
+                             f"con f_op = {f_op:.2f} Hz ({f_op*60:.0f} RPM). La fuerza es inversamente "
+                             "proporcional a la frecuencia de giro: a menor RPM, mayor carga dinámica. "
+                             "Este modelo aplica cuando el fabricante limita la vibración mediante una "
+                             "alarma de velocidad constante (v_RMS ≈ cte.), lo que implica F ∝ 1/f. "
+                             "Para la condición transitoria (②) se usa F_rd constante del fabricante.")
                 else:
                     add_para("Nota — modelo de fuerza transitoria de valor fijo: se aplica la fuerza "
                              "dinámica máxima del fabricante (F_rd) como valor constante a lo largo de "
