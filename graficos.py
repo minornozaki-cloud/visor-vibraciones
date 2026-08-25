@@ -265,25 +265,68 @@ def fig_clasif_loglog_mpl(lines, puntos, f_excl_lo, f_excl_hi, f_op, titulo, yli
     return fig
 
 
-def fig_iso_barras_mpl(df, iso_a, iso_b, iso_c, titulo):
-    """Barras de v_RMS (operación) por nodo con bandas ISO 20816-3, para el Word."""
-    fig, ax = plt.subplots(figsize=(10, 5))
-    labels = (df['Joint'].astype(str) + "\n(" + df['Caso'].astype(str) + ")").tolist()
+def fig_iso_barras_mpl(df, iso_a, iso_b, iso_c, titulo, n_label=5):
+    """Barras de v_RMS (operación) por nodo con bandas ISO 20816-3.
+
+    Las barras se colorean por dirección y **sólo se rotulan los n_label nodos
+    más desfavorables POR DIRECCIÓN** (evita el amontonamiento ilegible de
+    etiquetas cuando hay muchos nodos). El resto quedan sin etiqueta en el eje X.
+    """
+    from matplotlib.patches import Patch
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    df = df.reset_index(drop=True)
     vals = df['vRMS_op (mm/s)'].tolist()
-    top = max((max(vals) * 1.2 if vals else 0), iso_c * 1.3, 10.0)
+    n = len(vals)
+    vmax = max(vals) if vals else 0
+    top = max(vmax * 1.6, iso_c * 1.3, 10.0)
     for y0, y1, c in [(0, iso_a, '#1a9850'), (iso_a, iso_b, '#66bd63'),
                       (iso_b, iso_c, '#fee08b'), (iso_c, top, '#f46d43')]:
         ax.axhspan(y0, y1, color=c, alpha=0.12)
-    for y, c, n in [(iso_a, '#1a9850', f'A/B = {iso_a:.2f}'),
-                    (iso_b, '#b8860b', f'B/C = {iso_b:.2f}'),
-                    (iso_c, '#f46d43', f'C/D = {iso_c:.2f}')]:
+    for y, c, nm in [(iso_a, '#1a9850', f'A/B = {iso_a:.2f}'),
+                     (iso_b, '#b8860b', f'B/C = {iso_b:.2f}'),
+                     (iso_c, '#f46d43', f'C/D = {iso_c:.2f}')]:
         ax.axhline(y, color=c, ls='--', lw=1.3)
-        ax.text(len(labels)-0.4, y, n, fontsize=7, color=c, va='bottom', ha='right')
-    ax.bar(range(len(labels)), vals, color='#1f77b4', alpha=0.85)
-    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, fontsize=7)
-    ax.set_ylim(0, top); ax.set_ylabel('v_RMS (mm/s)', fontsize=9)
-    ax.set_title(titulo, fontsize=11, fontweight='bold')
+        ax.text(n - 0.4, y, nm, fontsize=8, color=c, va='bottom', ha='right')
+
+    # Barras coloreadas por dirección (mismos colores que el gráfico interactivo)
+    dir_colors = {"X": "#1f77b4", "Y": "#e74c3c", "Z": "#27ae60"}
+    bar_colors = [dir_colors.get(str(d), "#666") for d in df['Dir']]
+    ax.bar(range(n), vals, color=bar_colors, alpha=0.85, width=0.9)
+
+    dirs_pres = list(dict.fromkeys(df['Dir'].astype(str)))
+    handles = [Patch(facecolor=dir_colors.get(d, "#666"), label=f"Dir {d}")
+               for d in dirs_pres]
+    ax.legend(handles=handles, fontsize=8, loc='upper left', title="Dirección")
+
+    # Rotular SÓLO los N más desfavorables por dirección
+    sel = []
+    if n_label and n_label > 0:
+        for d in dirs_pres:
+            sub = df[df['Dir'].astype(str) == d].nlargest(int(n_label), 'vRMS_op (mm/s)')
+            for idx, row in sub.iterrows():
+                sel.append((idx, row['vRMS_op (mm/s)'],
+                            f"{row['Joint']} ({row['Caso']})",
+                            dir_colors.get(str(row['Dir']), "#666")))
+    sel.sort(key=lambda t: t[0])
+    for idx, h, lbl, col in sel:
+        ax.annotate(lbl, (idx, h), xytext=(0, 6), textcoords='offset points',
+                    rotation=90, ha='center', va='bottom', fontsize=7.5,
+                    fontweight='bold', color=col,
+                    arrowprops=dict(arrowstyle='-', lw=0.5, color=col))
+        ax.scatter([idx], [h], s=14, color=col, zorder=5,
+                   edgecolor='white', linewidth=0.4)
+
+    ax.set_xlim(-1, n)
+    ax.set_ylim(0, top)
+    ax.set_xticks([])
+    lbl_txt = (f"Nodos (ordenados según tabla) — rotulados los {int(n_label)} "
+               "peores por dirección" if n_label and n_label > 0
+               else "Nodos (ordenados según tabla)")
+    ax.set_xlabel(lbl_txt, fontsize=9)
+    ax.set_ylabel('v_RMS (mm/s)', fontsize=9)
+    ax.set_title(titulo, fontsize=12, fontweight='bold')
     ax.grid(True, axis='y', alpha=0.25, ls='--')
+    fig.tight_layout()
     return fig
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1550,7 +1593,8 @@ with tab_class:
         fig_iso.add_hrect(y0=iso_c, y1=iso_top_y, fillcolor="#f46d43", opacity=0.08, line_width=0)
         st.plotly_chart(fig_iso, use_container_width=True)
         descarga_png_mpl(fig_iso_barras_mpl(df_op, iso_a, iso_b, iso_c,
-                                            "ISO 20816-3 — v_RMS en operación por nodo"),
+                                            "ISO 20816-3 — v_RMS en operación por nodo",
+                                            int(n_label)),
                          "ISO_20816.png", "⬇️ Descargar ISO (PNG alta calidad)")
 
         # ══════════════════════════════════════════════════════════════════════
